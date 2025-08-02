@@ -1,0 +1,9 @@
+[package]
+name = "floatglass"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+color-eyre = "0.6.5"
+nusb = { version = "0.2.0", features = ["tokio"] }
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "tokio-macros"] }
