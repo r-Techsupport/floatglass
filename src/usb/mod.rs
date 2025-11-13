@@ -1,6 +1,7 @@
 //! Interactions with USB mass storage devices
 
 mod cbw;
+mod scsi;
 
 // Scratchpad:
 // https://www.downtowndougbrown.com/2018/12/usb-mass-storage-with-embedded-devices-tips-and-quirks/
@@ -25,7 +26,7 @@ use color_eyre::eyre::ensure;
 use color_eyre::Result;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Bulk, ControlIn, ControlType, In, Out};
-use nusb::{Device, DeviceInfo, list_devices};
+use nusb::{list_devices, Device, DeviceInfo};
 use tokio::io::{AsyncBufRead, AsyncWrite};
 use tracing::debug;
 
@@ -43,7 +44,11 @@ pub async fn enumerate_usb_storage_devices() -> Result<impl Iterator<Item = Devi
         dev.class() == MASS_STORAGE_USB_CLASS
             || dev
                 .interfaces()
-                .find(|interface| interface.class() == MASS_STORAGE_USB_CLASS)
+                .find(|interface| {
+                    interface.class() == MASS_STORAGE_USB_CLASS
+                        && interface.subclass() == 0x06
+                        && interface.protocol() == 0x50
+                })
                 .is_some()
     });
     Ok(usb_storage_devices)
@@ -54,6 +59,13 @@ pub struct USBDrive {
     bulk_read: EndpointRead<Bulk>,
 }
 
+impl USBDrive {
+    fn submit_command(command: cbw::CommandBlockWrapper) -> cbw::CommandStatusWrapper {
+        // TODO: ME!:w
+        todo!();
+    }
+}
+
 /// As described by  the USB Mass Storage Class - Bulk Only Transport spec,
 /// section 3.2.
 ///
@@ -62,20 +74,19 @@ pub struct USBDrive {
 ///
 /// <https://en.wikipedia.org/wiki/Logical_unit_number>
 const MAX_LUN_REQUEST: ControlIn = ControlIn {
-            control_type: ControlType::Class,
-            recipient: nusb::transfer::Recipient::Interface,
-            request: 0xfe,
-            value: 0,
-            index: 0,
-            length: 1,
+    control_type: ControlType::Class,
+    recipient: nusb::transfer::Recipient::Interface,
+    request: 0xfe,
+    value: 0,
+    index: 0,
+    length: 1,
 };
 
-
 /// Opens the provided USB mass storage device.
-/// 
+///
 /// This initialization sequence follows the order
 /// described here: <https://www.downtowndougbrown.com/2018/12/usb-mass-storage-with-embedded-devices-tips-and-quirks/>,
-/// 
+///
 /// where the author obtained it with a USB hardware signal analyzer and reverse engineering the implementations on macos, windows, and linux
 #[tracing::instrument]
 pub async fn open_usb_device(device_info: DeviceInfo) -> Result<USBDrive> {
@@ -84,9 +95,14 @@ pub async fn open_usb_device(device_info: DeviceInfo) -> Result<USBDrive> {
     let device: Device = device_info.open().await?;
     let interface: nusb::Interface = device.claim_interface(0).await?;
     // 2. Request the maximum LUN
-    let max_lun = interface.control_in(MAX_LUN_REQUEST, Duration::from_millis(500)).await?.len();
-    ensure!(max_lu
-    ).await?.len() == 1, "devices with more than one LUN are not supported");
+    let max_lun = interface
+        .control_in(MAX_LUN_REQUEST, Duration::from_millis(500))
+        .await?
+        .len();
+    ensure!(
+        max_lun == 1,
+        "devices with more than one LUN are not supported"
+    );
     // 3. Keep trying the sequence of "TEST UNIT READY" followed by "INQUIRY"
     // until they both return success back-to-back
 
