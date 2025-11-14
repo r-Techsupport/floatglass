@@ -1,4 +1,4 @@
-use color_eyre::{eyre::ContextCompat, Result};
+use color_eyre::{Result, eyre::ContextCompat};
 use tracing::{info, level_filters::LevelFilter};
 use usb::enumerate_usb_storage_devices;
 use usbh_scsi::commands::inquiry::InquiryCommand;

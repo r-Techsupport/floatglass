@@ -32,6 +32,10 @@ use tracing::debug;
 
 /// https://www.usb.org/defined-class-codes
 const MASS_STORAGE_USB_CLASS: u8 = 0x08;
+/// SCSI transparent set subclass
+const MASS_STORAGE_SCSI_SUBCLASS: u8 = 0x06;
+/// Transport protocol
+const MASS_STORAGE_BULK_ONLY_TRANSPORT: u8 = 0x50;
 
 /// Returns a list of every USB storage device currently connected to the host machine
 pub async fn enumerate_usb_storage_devices() -> Result<impl Iterator<Item = DeviceInfo>> {
@@ -46,8 +50,8 @@ pub async fn enumerate_usb_storage_devices() -> Result<impl Iterator<Item = Devi
                 .interfaces()
                 .find(|interface| {
                     interface.class() == MASS_STORAGE_USB_CLASS
-                        && interface.subclass() == 0x06
-                        && interface.protocol() == 0x50
+                        && interface.subclass() == MASS_STORAGE_SCSI_SUBCLASS
+                        && interface.protocol() == MASS_STORAGE_BULK_ONLY_TRANSPORT
                 })
                 .is_some()
     });
