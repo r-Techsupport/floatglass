@@ -18,7 +18,7 @@
 #[repr(u8)]
 #[non_exhaustive]
 enum OpCode {
-    /// SPC-2 7.24
+    /// SPC-2 7.25
     TestUnitReady = 0x0,
 }
 
