@@ -1,17 +1,36 @@
 //! A USB packet containing a command block wrapper and associated
 //! information.
 
+use color_eyre::eyre::ensure;
+
+use crate::usb::scsi::{CDB_SIZE, CommandDescriptorBlock};
+
+use super::scsi;
+
 /// Signature that identifies a packet as a CBW.
 ///
 /// This packet contains the below magic number (little endian).
 ///
 /// See USB Mass Storage Class - Bulk Only Transport, section 5
 const CBW_SIGNATURE: u32 = 0x43425355;
-enum CBWDirection {
+/// Signature that identifies a packet as a CSW.
+///
+/// The packet will start with the below magic number (little endian).
+const CSW_SIGNATURE: u32 = 0x53425355;
+
+/// A command block wrapper is *always* 31 bytes in size*
+const CBW_SIZE: usize = 31;
+
+pub enum CBWDirection {
     /// Data-Out: from host to the device
     DataOut = 0b1000_000,
     /// Data-In: from the device to the host
     DataIn = 0,
+    /// For when the CBW has a data transfer length of zero.
+    ///
+    /// According to the spec, this field is ignored entirely if the data transfer
+    /// length field is zero, so it exists in the enum purely as an abstraction
+    NonDirectional = 255,
 }
 
 /// The CBW wraps an SCSi command.
@@ -27,18 +46,20 @@ pub struct CommandBlockWrapper {
     /// indicating a CBW."
     ///
     /// This value should always be set to [`CBW_SIGNATURE`]
-    signature: u32,
+    signature: [u8; 4],
     /// `dCBWTag` - "A Command Block Tag sent by the host. The device shall echo
     /// the contents of this field back to the host in the [tag] field of the associated CSW.
     /// The [tag] positvely associates a CSW with the corrosponding CBW"
-    tag: u32,
+    ///
+    /// See [`TagGenerator`] for tooling.
+    pub tag: u32,
     /// `dCBWDataTransferLength` - "The number of bytes that the host expects
     /// to transfer on the Bulk-In or Bulk-Out endpoint (as indicated by the
     /// *Direction* bit) during the execution of this command. If this field
     /// is zero, the device and the host shall transfer no data between the CBW
     /// and associated CSW, and the device shall ignore the value of the *Direction*
     /// bit in *bmCBWFlags*."
-    data_transfer_length: u32,
+    data_transfer_length: [u8; 4],
     /// `bmCBWFlags` - A one byte field specifying the direction
     /// of data transfer.
     direction: CBWDirection,
@@ -60,18 +81,68 @@ pub struct CommandBlockWrapper {
     /// the significant bytes shall be transferred first, beginning with the byte
     /// at offset 15 (Fh). The device shall ignore the content of *CBWCB* field
     /// past the offset (15 + *bCBWCBLength* - 1)."
-    command: [u8; 16],
+    command: [u8; scsi::CDB_SIZE],
 }
 
-/// A packet containing the status/result of the command block.
+impl CommandBlockWrapper {
+    /// Creates a new [`CommandBlockWrapper`].
+    pub fn new(
+        command: scsi::CommandDescriptorBlock,
+        data_transfer_length: u32,
+        direction: CBWDirection,
+        tag: u32,
+    ) -> Self {
+        Self {
+            signature: CBW_SIGNATURE.to_le_bytes(),
+            tag,
+            data_transfer_length: data_transfer_length.to_le_bytes(),
+            direction,
+            lun: 0,
+            command_block_length: CDB_SIZE as u8,
+            command: command
+                .as_slice()
+                .try_into()
+                .expect("asserted at compile time that this size is valid"),
+        }
+    }
+
+    /// Returns a slice containing the entirety of `self` that is exactly [`CBW_SIZE`] bytes in length
+    pub fn as_slice(&'_ self) -> &[u8] {
+        const {
+            assert!(
+                std::mem::size_of::<CommandBlockWrapper>() == CBW_SIZE,
+                "CommandBlockWrapper not 31 bytes in size"
+            );
+        };
+        // SAFETY: the const assertion above
+        // guarantees that the size is as we expected,
+        // and we know the lifetime of `self` is valid.
+        let slice: &'_ [u8] = unsafe {
+            let ptr = self as *const CommandBlockWrapper as *const u8;
+            std::slice::from_raw_parts(ptr, CBW_SIZE)
+        };
+        slice
+    }
+}
+
+#[repr(u8)]
+#[derive(Copy, Clone, Debug)]
+pub enum CommandStatus {
+    Passed = 0,
+    Failed = 1,
+    PhaseError = 2,
+}
+
+/// A packet containing the status/return value of a command block executed by the USB device.
 #[repr(packed)]
+#[derive(Copy, Clone, Debug)]
 pub struct CommandStatusWrapper {
     /// `dCSWSignature` - "Signature that helps identify this data packet as a CSW.
     /// The signature field shall contain the value 53425355h (little endian), indicating CSW."
     signature: u32,
     /// `dCSWTag` - "The device shall set this field to the value received in the *dCBWTag* of
     /// the associated CBW."
-    tag: u32,
+    pub tag: u32,
     /// `dCSWDataResidue` - "For Data-Out the device shall report in the *dCSWDataResidue* the
     /// difference between the amount of data expected as stated in the *dCBWDataTransferLength*,
     /// and the actual amount of data processed by the device. For Data-In the device
@@ -79,7 +150,7 @@ pub struct CommandStatusWrapper {
     /// as stated in the *dCBWDataTransferLength* and the actual amount of relevant
     /// data sent by the device. The *dCSWDataResidue* shall not exceed the value sent in the
     /// *dCBWDataTransferLength*."
-    data_residue: u32,
+    pub data_residue: u32,
     /// `bCSWStatus` "*bCSWStatus indicates the success or failure of the command. The device
     /// shall set this byte to zero if the command completed successfully. A non-zero value
     /// shall indicate a failure during command execution according to the following table:
@@ -90,5 +161,46 @@ pub struct CommandStatusWrapper {
     /// | 0x01  | Command Failed                 |
     /// | 0x02  | Phase Error                    |
     /// | _     | All other values are reserved  |
-    status: u8,
+    pub status: CommandStatus,
+}
+
+impl CommandStatusWrapper {
+    /// Cast the provided slice into a command status wrapper.
+    ///
+    /// This function validates that the `signature` is correct.
+    pub fn from_slice(buf: &[u8]) -> color_eyre::Result<&CommandStatusWrapper> {
+        println!("{buf:X?}");
+        ensure!(
+            buf.len() == std::mem::size_of::<CommandStatusWrapper>(),
+            "provided buffer *must* be same size as struct (CSW_SIZE)"
+        );
+        // SAFETY: The buffer *must* be the same size as the struct
+        let csw: &'_ CommandStatusWrapper =
+            unsafe { &*(buf.as_ptr().offset(-1) as *const CommandStatusWrapper) };
+        let signature = csw.signature;
+        ensure!(
+            signature == CSW_SIGNATURE,
+            "invalid magic number for command status wrapper, should be 0x53425355, is 0x{:X}",
+            signature
+        );
+
+        Ok(csw)
+    }
+}
+
+/// Used for generating unique-ish command block tags.
+pub struct TagGenerator(u32);
+
+impl TagGenerator {
+    /// Initialize the tag generator to zero.
+    pub fn new() -> TagGenerator {
+        Self(0)
+    }
+
+    /// Returns a unique-ish u32 that's different from the previously returned value.
+    pub fn tag(&mut self) -> u32 {
+        let output = self.0;
+        self.0 = self.0.wrapping_add(1);
+        output
+    }
 }

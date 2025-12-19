@@ -10,6 +10,9 @@
 //! This is an older version of the SCSI block commands specification. It contains information
 //! about commands specific to block devices.
 
+/// We chose to implement a 16 byte CDB as described in SPC-2 4.3.2, table 4
+pub const CDB_SIZE: usize = 16;
+
 /// Operation codes for a Command Descriptor Block, specifying what operation you want
 /// to do as described in 7.1 of SPC-2.
 ///
@@ -17,7 +20,7 @@
 /// as needed
 #[repr(u8)]
 #[non_exhaustive]
-enum OpCode {
+pub enum OpCode {
     /// SPC-2 7.25
     TestUnitReady = 0x0,
 }
@@ -29,7 +32,7 @@ enum OpCode {
 /// "SCSI Primary Commands - 2 (SPC-2)" 4.3.2 The fixed length CDB formats
 /// Table 4 -- Typical CDB for 16-byte commands
 #[repr(packed)]
-struct CommandDescriptorBlock {
+pub struct CommandDescriptorBlock {
     ///"The `OPERATION CODE` field contains the code value identifying the operation
     /// being requested by the CDB. SAM-2 defines the general structure of the operation
     /// code value. The `OPERATION CODE` field has a consistently defined meaning across
@@ -41,7 +44,7 @@ struct CommandDescriptorBlock {
     /// "The logical block addresses on a logical unit or within a volume partition
     /// shall begin with block zero and be contiguous up to the last logical
     /// block of that logical unit or within that partition."
-    pub logical_block_address: u32,
+    pub logical_block_address: u64,
     /// `TRANSFER_LENGTH` or `PARAMETER_LIST_LENGTH`
     /// or `ALLOCATION LENGTH`
     ///
@@ -90,6 +93,47 @@ struct CommandDescriptorBlock {
     pub param: u32,
     pub _reserved: u8,
     /// "The contents of the `CONTROL` field are defined in SAM-2. The `CONTROL` field
-    /// has a consistently defined meaning across all commands.
+    /// has a consistently defined meaning across all commands."
+    ///
+    /// As far as I can tell, this value is set to zero by most modern implementations.
     pub control: u8,
+}
+
+impl CommandDescriptorBlock {
+    pub fn as_slice(&'_ self) -> &[u8] {
+        const {
+            assert!(
+                std::mem::size_of::<CommandDescriptorBlock>() == CDB_SIZE,
+                "CommandDescriptorBlock not 16 bytes in size"
+            );
+        };
+        // SAFETY: the const assertion above
+        // guarantees that the size is as we expected,
+        // and the reference is tied to the correct lifetime
+        let slice: &'_ [u8] = unsafe {
+            let ptr = self as *const CommandDescriptorBlock as *const u8;
+            std::slice::from_raw_parts(ptr, CDB_SIZE)
+        };
+        slice
+    }
+
+    /// "The TEST UNIT READY command provides a means to check if the logical unit is ready.
+    ///
+    /// If the logical unit is able to accept an appropriate medium access command without
+    /// returning CHECK CONDITION status, this command shall return a GOOD sstatus. If the logical
+    /// unit is unable to become operational or is in a state such that an applicaton client action
+    /// (e.g START UNIT command) is required to make the unit ready, the device server shall return
+    /// CHECK CONDITION status with a sense key of NOT READY."
+    ///
+    /// Defined in SPC2 7.25
+    pub fn test_unit_ready() -> CommandDescriptorBlock {
+        Self {
+            operation_code: OpCode::TestUnitReady,
+            misc_info: 0,
+            logical_block_address: 0,
+            param: 0,
+            _reserved: 0,
+            control: 0,
+        }
+    }
 }

@@ -1,10 +1,9 @@
+pub mod usb;
+
 use color_eyre::{Result, eyre::ContextCompat};
 use tracing::{info, level_filters::LevelFilter};
 use usb::enumerate_usb_storage_devices;
-use usbh_scsi::commands::inquiry::InquiryCommand;
 
-use crate::usb::open_usb_device;
-mod usb;
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize error handling
@@ -19,8 +18,7 @@ async fn main() -> Result<()> {
     let device = devices
         .next()
         .wrap_err("at least one usb drive should be connected")?;
-    open_usb_device(device).await?;
-    use usbh_scsi::*;
+    let drive = usb::USBDrive::new(device).await?;
 
     //let mut devices = storage::UsbMassStorage::list()?;
     //if let Some(closed) = devices.pop() {
