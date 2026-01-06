@@ -23,6 +23,8 @@ pub const CDB_SIZE: usize = 16;
 pub enum OpCode {
     /// SPC-2 7.25
     TestUnitReady = 0x0,
+    /// SPC-2 7.3
+    Inquiry = 0x12,
 }
 
 /// "A command is communicated by sending a command descriptor block
@@ -31,7 +33,7 @@ pub enum OpCode {
 /// This struct implements the format described in
 /// "SCSI Primary Commands - 2 (SPC-2)" 4.3.2 The fixed length CDB formats
 /// Table 4 -- Typical CDB for 16-byte commands
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct CommandDescriptorBlock {
     ///"The `OPERATION CODE` field contains the code value identifying the operation
     /// being requested by the CDB. SAM-2 defines the general structure of the operation

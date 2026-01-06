@@ -39,7 +39,7 @@ pub enum CBWDirection {
 ///
 /// Spec info can be found in the USB Mass Storage Class - Bulk Only Transport document,
 /// section 5.
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct CommandBlockWrapper {
     /// `dCBWSignature` -"Signature that helps identify this packet as a CBW.
     /// The signature field shall contain the value 43425355h (little endian),
@@ -134,7 +134,7 @@ pub enum CommandStatus {
 }
 
 /// A packet containing the status/return value of a command block executed by the USB device.
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Copy, Clone, Debug)]
 pub struct CommandStatusWrapper {
     /// `dCSWSignature` - "Signature that helps identify this data packet as a CSW.
@@ -175,8 +175,9 @@ impl CommandStatusWrapper {
             "provided buffer *must* be same size as struct (CSW_SIZE)"
         );
         // SAFETY: The buffer *must* be the same size as the struct
+        // TODO: why is `.offset(-1)` needed?
         let csw: &'_ CommandStatusWrapper =
-            unsafe { &*(buf.as_ptr().offset(-1) as *const CommandStatusWrapper) };
+            unsafe { &*(buf.as_ptr() as *const CommandStatusWrapper) };
         let signature = csw.signature;
         ensure!(
             signature == CSW_SIGNATURE,
