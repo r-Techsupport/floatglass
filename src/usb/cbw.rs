@@ -3,7 +3,7 @@
 
 use color_eyre::eyre::ensure;
 
-use crate::usb::scsi::{CDB_SIZE, CommandDescriptorBlock};
+use crate::usb::scsi::CDB_SIZE;
 
 use super::scsi;
 
@@ -52,7 +52,7 @@ pub struct CommandBlockWrapper {
     /// The [tag] positvely associates a CSW with the corrosponding CBW"
     ///
     /// See [`TagGenerator`] for tooling.
-    pub tag: u32,
+    pub tag: [u8; 4],
     /// `dCBWDataTransferLength` - "The number of bytes that the host expects
     /// to transfer on the Bulk-In or Bulk-Out endpoint (as indicated by the
     /// *Direction* bit) during the execution of this command. If this field
@@ -94,7 +94,7 @@ impl CommandBlockWrapper {
     ) -> Self {
         Self {
             signature: CBW_SIGNATURE.to_le_bytes(),
-            tag,
+            tag: tag.to_le_bytes(),
             data_transfer_length: data_transfer_length.to_le_bytes(),
             direction,
             lun: 0,
@@ -169,13 +169,19 @@ impl CommandStatusWrapper {
     ///
     /// This function validates that the `signature` is correct.
     pub fn from_slice(buf: &[u8]) -> color_eyre::Result<&CommandStatusWrapper> {
-        println!("{buf:X?}");
         ensure!(
             buf.len() == std::mem::size_of::<CommandStatusWrapper>(),
-            "provided buffer *must* be same size as struct (CSW_SIZE)"
+            "provided buffer *must* be same size as struct (CSW_SIZE), was instead {}",
+            buf.len()
         );
+        // Casting to an enum if it might be an invalid option is undefined behavior.
+        // Valid options (as defined by the spec) are values between 0 and 2
+        ensure!(
+            (0..=2).contains(buf.last().unwrap()),
+            "the command status field is invalid"
+        );
+
         // SAFETY: The buffer *must* be the same size as the struct
-        // TODO: why is `.offset(-1)` needed?
         let csw: &'_ CommandStatusWrapper =
             unsafe { &*(buf.as_ptr() as *const CommandStatusWrapper) };
         let signature = csw.signature;
@@ -193,9 +199,9 @@ impl CommandStatusWrapper {
 pub struct TagGenerator(u32);
 
 impl TagGenerator {
-    /// Initialize the tag generator to zero.
+    /// Initialize the tag generator.
     pub fn new() -> TagGenerator {
-        Self(0)
+        Self(123)
     }
 
     /// Returns a unique-ish u32 that's different from the previously returned value.
@@ -203,5 +209,20 @@ impl TagGenerator {
         let output = self.0;
         self.0 = self.0.wrapping_add(1);
         output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::usb::cbw::CommandStatusWrapper;
+
+    #[test]
+    fn catch_invalid_enum_repr() {
+        // Captured from an actual USB device, with the last byte (command_status) modified to
+        // an invalid value (0xaa)
+        let input_packet = [0x55, 0x53, 0x42, 0x53, 0, 0, 0, 0, 0, 0, 0, 0, 0xaa];
+        let r = CommandStatusWrapper::from_slice(&input_packet);
+        let e = r.expect_err("should catch invalid command status");
+        assert!(e.root_cause().to_string().contains("command status"));
     }
 }
