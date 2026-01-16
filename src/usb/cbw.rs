@@ -3,7 +3,7 @@
 
 use color_eyre::eyre::ensure;
 
-use crate::usb::scsi::CDB_SIZE;
+use crate::usb::scsi::MAX_CDB_SIZE;
 
 use super::scsi;
 
@@ -81,13 +81,13 @@ pub struct CommandBlockWrapper {
     /// the significant bytes shall be transferred first, beginning with the byte
     /// at offset 15 (Fh). The device shall ignore the content of *CBWCB* field
     /// past the offset (15 + *bCBWCBLength* - 1)."
-    command: [u8; scsi::CDB_SIZE],
+    command: [u8; scsi::MAX_CDB_SIZE],
 }
 
 impl CommandBlockWrapper {
     /// Creates a new [`CommandBlockWrapper`].
     pub fn new(
-        command: scsi::CommandDescriptorBlock,
+        command: scsi::CommandBlock,
         data_transfer_length: u32,
         direction: CBWDirection,
         tag: u32,
@@ -98,11 +98,8 @@ impl CommandBlockWrapper {
             data_transfer_length: data_transfer_length.to_le_bytes(),
             direction,
             lun: 0,
-            command_block_length: CDB_SIZE as u8,
-            command: command
-                .as_slice()
-                .try_into()
-                .expect("asserted at compile time that this size is valid"),
+            command_block_length: command.len() as u8,
+            command: command.get(),
         }
     }
 
@@ -201,6 +198,8 @@ pub struct TagGenerator(u32);
 impl TagGenerator {
     /// Initialize the tag generator.
     pub fn new() -> TagGenerator {
+        // 123 was chosen as a distinct, human-readable pattern to differentiate it from the rest
+        // of the packet
         Self(123)
     }
 

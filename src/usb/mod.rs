@@ -150,7 +150,7 @@ impl USBDrive {
         // until they both return success back-to-back
         debug!("Submitting TEST UNIT READY");
         let test_unit_ready = CommandBlockWrapper::new(
-            scsi::CommandDescriptorBlock::test_unit_ready(),
+            scsi::command::test_unit_ready(),
             0,
             cbw::CBWDirection::NonDirectional,
             device.tag_generator.tag(),
@@ -179,7 +179,7 @@ impl USBDrive {
         self.bulk_read.read_exact(&mut response_buffer).await?;
         let response = CommandStatusWrapper::from_slice(&response_buffer)?;
         debug!("response recieved");
-        ensure!(response.tag == command.tag);
+        ensure!(response.tag == u32::from_le_bytes(command.tag));
 
         Ok(*response)
     }
