@@ -1,14 +1,14 @@
 //! SCSI protocol and format implementation as described in:
 //! - SCSI Primary Commands – 2 (SPC-2):
-//! <hhttps://www.rockbox.org/wiki/pub/Main/DataSheets/spc2r20.pdfttps://www.rockbox.org/wiki/pub/Main/DataSheets/spc2r20.pdf>
-//!         - This is an older version of the SCSI specification.
-//!       It has enough information to describe almost every command we need to know,
-//!       except for some information specific to block devices, which is described in the next SCSI
-//!       specification linked below.
+//!   <https://www.rockbox.org/wiki/pub/Main/DataSheets/spc2r20.pdf>
+//!   This is an older version of the SCSI specification.
+//!   It has enough information to describe almost every command we need to know,
+//!   except for some information specific to block devices, which is described in the next SCSI
+//!   specification linked below.
 //! - SCSI Block Commands – 2 (SBC-2)
-//! <https://raw.githubusercontent.com/carmark/papers/master/storage/scsi/sbc2r16.pdf>
-//! This is an older version of the SCSI block commands specification. It contains information
-//! about commands specific to block devices.
+//!   <https://raw.githubusercontent.com/carmark/papers/master/storage/scsi/sbc2r16.pdf>
+//!   This is an older version of the SCSI block commands specification. It contains information
+//!   about commands specific to block devices.
 //!
 //! This module uses the term "command descriptor" to describe a struct and implementation specific
 //! details behind a CDB, and uses the term "command block" to describe a "black box" containing
@@ -87,6 +87,19 @@ struct ShortCommandDescriptor {
     pub control: u8,
 }
 
+impl ShortCommandDescriptor {
+    // TODO: Make this a generic trait implementable across
+    // any command descriptor
+    /// Returns a reference to a 6 byte slice of the descriptor.
+    pub fn as_slice(&'_ self) -> &[u8] {
+        // SAFETY: A struct is the size of itself
+        let slice: &'_ [u8] = unsafe {
+            let ptr = self as *const ShortCommandDescriptor as *const u8;
+            std::slice::from_raw_parts(ptr, std::mem::size_of::<ShortCommandDescriptor>())
+        };
+        slice
+    }
+}
 /// "A command is communicated by sending a command descriptor block
 /// to the device ...."
 ///
@@ -133,7 +146,7 @@ struct LongCommandDescriptor {
     /// Refer to the specific command description for further information."
     ///
     /// # `PARAMETER LIST LENGTH`
-    /// "The `PARAMETER LISLT LENGTH` field is used to specify the number of bytes sent
+    /// "The `PARAMETER LIST LENGTH` field is used to specify the number of bytes sent
     /// from the Data-Out Buffer. This field is typically used in CDBs for parameters
     /// that are sent to a device server (e.g., mode parameters, diagnostic parameters,
     /// log parameters). A parameter of length zero indicates that no data shall be transferred.
@@ -180,7 +193,7 @@ impl LongCommandDescriptor {
 pub mod command {
     use crate::usb::scsi::ShortCommandDescriptor;
 
-    use super::{CommandBlock, LongCommandDescriptor, OpCode};
+    use super::{CommandBlock, OpCode};
 
     /// "The TEST UNIT READY command provides a means to check if the logical unit is ready.
     ///
@@ -193,12 +206,10 @@ pub mod command {
     /// Defined in SPC2 7.25
     pub fn test_unit_ready() -> CommandBlock<'static> {
         CommandBlock(
-            LongCommandDescriptor {
+            ShortCommandDescriptor {
                 operation_code: OpCode::TestUnitReady,
-                misc_info: 0,
-                logical_block_address: 0,
-                param: 0,
-                _reserved: 0,
+                logical_block_address: [0, 0, 0],
+                misc_len: 0,
                 control: 0,
             }
             .as_slice(),
@@ -209,13 +220,20 @@ pub mod command {
     /// of the target and a component logical unit be sent to the application client.
     /// Options allow the client to request additional information."
     ///
-    /// Defined in SPC2 7.3.1
+    /// Defined in SPC2 7.3.1 table 45
     pub fn inquiry() -> CommandBlock<'static> {
-        //ShortCommandDescriptor
-        //    operation_code: OpCode::Inquiry,
-        //    misc_info: 0,
-        //}
-        todo!()
+        CommandBlock(
+            ShortCommandDescriptor {
+                operation_code: OpCode::Inquiry,
+                logical_block_address: [0, 0, 0],
+                // For inquiry, is ALLOCATION LENGTH,
+                // "The standard INQUIRY data shall contain at least 36 bytes"
+                // (table 46)
+                misc_len: 36,
+                control: 0,
+            }
+            .as_slice(),
+        )
     }
 }
 

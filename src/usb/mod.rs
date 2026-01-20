@@ -57,14 +57,11 @@ pub async fn enumerate_usb_storage_devices() -> Result<impl Iterator<Item = Devi
     let usb_storage_devices = all_usb_devices.filter(|dev| {
         //debug!("scanning usb device: {:#?}", dev);
         dev.class() == MASS_STORAGE_USB_CLASS
-            || dev
-                .interfaces()
-                .find(|interface| {
-                    interface.class() == MASS_STORAGE_USB_CLASS
-                        && interface.subclass() == MASS_STORAGE_SCSI_SUBCLASS
-                        && interface.protocol() == MASS_STORAGE_BULK_ONLY_TRANSPORT
-                })
-                .is_some()
+            || dev.interfaces().any(|interface| {
+                interface.class() == MASS_STORAGE_USB_CLASS
+                    && interface.subclass() == MASS_STORAGE_SCSI_SUBCLASS
+                    && interface.protocol() == MASS_STORAGE_BULK_ONLY_TRANSPORT
+            })
     });
     Ok(usb_storage_devices)
 }
@@ -73,6 +70,7 @@ pub struct USBDrive {
     bulk_write: EndpointWrite<Bulk>,
     bulk_read: EndpointRead<Bulk>,
     tag_generator: TagGenerator,
+    response_buf: Vec<u8>,
 }
 
 impl USBDrive {
@@ -144,6 +142,7 @@ impl USBDrive {
             bulk_write: writer,
             bulk_read: reader,
             tag_generator: TagGenerator::new(),
+            response_buf: vec![0; 2048],
         };
         info!("starting device configuration");
         // 3. Keep trying the sequence of "TEST UNIT READY" followed by "INQUIRY"
@@ -156,31 +155,50 @@ impl USBDrive {
             device.tag_generator.tag(),
         );
         let response = device.submit_cbw(test_unit_ready).await?;
-        dbg!(response);
 
+        debug!("Submitting INQUIRY");
+        let inquiry = CommandBlockWrapper::new(
+            scsi::command::inquiry(),
+            36,
+            cbw::CBWDirection::DataIn,
+            device.tag_generator.tag(),
+        );
+        let response = device.submit_cbw(inquiry).await?;
         Ok(device)
     }
 
-    /// Submit a command block wrapper, returning the associated command block wrapper.
+    /// Submit a command block wrapper, returning any data sent by the device, alongside the
+    /// associated command status wrapper.
     ///
     /// This function validates that the status wrapper is correctly associated with the response,
     /// but does not validate that the command executed correctly, i.e it will still return `Ok(..)`
     /// if the command failed.
+    #[tracing::instrument(skip_all)]
     pub async fn submit_cbw(
         &mut self,
         command: CommandBlockWrapper,
-    ) -> Result<CommandStatusWrapper> {
+    ) -> Result<(&[u8], &CommandStatusWrapper)> {
         // Submit the command
-        self.bulk_write.write(command.as_slice()).await?;
+        self.bulk_write.write_all(command.as_slice()).await?;
         self.bulk_write.flush_end_async().await?;
         debug!("command submitted, pending response");
-        // Read the response
-        let mut response_buffer: [u8; std::mem::size_of::<CommandStatusWrapper>()] = [0; 13];
-        self.bulk_read.read_exact(&mut response_buffer).await?;
-        let response = CommandStatusWrapper::from_slice(&response_buffer)?;
+        // Ensure there's sufficient size
+        let required_capacity = u32::from_le_bytes(command.data_transfer_length) as usize;
+        if self.response_buf.len() < required_capacity + 13 {
+            self.response_buf.resize(required_capacity + 13, 0);
+        }
+        let (response_buf, status_buf) = self.response_buf.split_at_mut(required_capacity);
+        // Sometimes there's leftover space in the response buffer that we don't care about
+        let status_buf = &mut status_buf[..13];
+        self.bulk_read.read_exact(response_buf).await?;
+        debug!("response buffer filled with {} bytes", response_buf.len());
+        // The status is sent after the response? maybe?
+        self.bulk_read.read_exact(status_buf).await?;
+        debug!("status buffer filled with {} bytes", status_buf.len());
+        let status = CommandStatusWrapper::from_slice(status_buf)?;
         debug!("response recieved");
-        ensure!(response.tag == u32::from_le_bytes(command.tag));
+        ensure!(status.tag == u32::from_le_bytes(command.tag));
 
-        Ok(*response)
+        Ok((response_buf, status))
     }
 }

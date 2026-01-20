@@ -1,11 +1,8 @@
 //! A USB packet containing a command block wrapper and associated
 //! information.
 
-use color_eyre::eyre::ensure;
-
-use crate::usb::scsi::MAX_CDB_SIZE;
-
 use super::scsi;
+use color_eyre::eyre::ensure;
 
 /// Signature that identifies a packet as a CBW.
 ///
@@ -23,7 +20,7 @@ const CBW_SIZE: usize = 31;
 
 pub enum CBWDirection {
     /// Data-Out: from host to the device
-    DataOut = 0b1000_000,
+    DataOut = 0b100_0000,
     /// Data-In: from the device to the host
     DataIn = 0,
     /// For when the CBW has a data transfer length of zero.
@@ -59,21 +56,21 @@ pub struct CommandBlockWrapper {
     /// is zero, the device and the host shall transfer no data between the CBW
     /// and associated CSW, and the device shall ignore the value of the *Direction*
     /// bit in *bmCBWFlags*."
-    data_transfer_length: [u8; 4],
+    pub data_transfer_length: [u8; 4],
     /// `bmCBWFlags` - A one byte field specifying the direction
     /// of data transfer.
-    direction: CBWDirection,
+    pub direction: CBWDirection,
     /// `bCBWLUN` - "The device Logical Unit Number (LUN) to which the command block
     /// is being sent. For devices that support multiple LUNs, the host shall
     /// place into this field, the LUN to which this command block is addressed.
     /// Otherwise, the host shall set this field to zero."
     ///
     /// Multiple LUNs are not currently supported, so this field can just be zero.
-    lun: u8,
+    pub lun: u8,
     /// `bCBWCBLength` - "The valid length of the *CBWCB* in bytes. This defines the
     /// valid length of the command block. The only legal values are 1 through 16
     /// (01h through 10h). All other values are reserved."
-    command_block_length: u8,
+    pub command_block_length: u8,
     /// `CBWCB` - "The command block to be executed by the device. The device shall
     /// first interpret the *bCBWCBLength* bytes in this field as a command block as
     /// defined by the command set *bInterfaceSubClass*. If the command set supported by the
@@ -81,7 +78,7 @@ pub struct CommandBlockWrapper {
     /// the significant bytes shall be transferred first, beginning with the byte
     /// at offset 15 (Fh). The device shall ignore the content of *CBWCB* field
     /// past the offset (15 + *bCBWCBLength* - 1)."
-    command: [u8; scsi::MAX_CDB_SIZE],
+    pub command: [u8; scsi::MAX_CDB_SIZE],
 }
 
 impl CommandBlockWrapper {
@@ -173,9 +170,10 @@ impl CommandStatusWrapper {
         );
         // Casting to an enum if it might be an invalid option is undefined behavior.
         // Valid options (as defined by the spec) are values between 0 and 2
+        let last_byte = buf.last().unwrap();
         ensure!(
-            (0..=2).contains(buf.last().unwrap()),
-            "the command status field is invalid"
+            (0..=2).contains(last_byte),
+            "the command status field is invalid, should be in 0..=2, was {last_byte}"
         );
 
         // SAFETY: The buffer *must* be the same size as the struct
