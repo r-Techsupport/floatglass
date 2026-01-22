@@ -120,7 +120,7 @@ impl CommandBlockWrapper {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum CommandStatus {
     Passed = 0,
     Failed = 1,

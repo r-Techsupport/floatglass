@@ -30,7 +30,7 @@ use nusb::{Device, DeviceInfo, list_devices};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info, warn};
 
-use crate::usb::cbw::{CommandBlockWrapper, CommandStatusWrapper, TagGenerator};
+use crate::usb::cbw::{CommandBlockWrapper, CommandStatus, CommandStatusWrapper, TagGenerator};
 
 /// https://www.usb.org/defined-class-codes
 const MASS_STORAGE_USB_CLASS: u8 = 0x08;
@@ -154,7 +154,7 @@ impl USBDrive {
             cbw::CBWDirection::NonDirectional,
             device.tag_generator.tag(),
         );
-        let response = device.submit_cbw(test_unit_ready).await?;
+        device.submit_cbw(test_unit_ready).await?;
 
         debug!("Submitting INQUIRY");
         let inquiry = CommandBlockWrapper::new(
@@ -170,9 +170,8 @@ impl USBDrive {
     /// Submit a command block wrapper, returning any data sent by the device, alongside the
     /// associated command status wrapper.
     ///
-    /// This function validates that the status wrapper is correctly associated with the response,
-    /// but does not validate that the command executed correctly, i.e it will still return `Ok(..)`
-    /// if the command failed.
+    /// This function validates that the status wrapper is correctly associated with the response
+    /// and that the command succeeded.
     #[tracing::instrument(skip_all)]
     pub async fn submit_cbw(
         &mut self,
@@ -197,8 +196,14 @@ impl USBDrive {
         debug!("status buffer filled with {} bytes", status_buf.len());
         let status = CommandStatusWrapper::from_slice(status_buf)?;
         debug!("response recieved");
-        ensure!(status.tag == u32::from_le_bytes(command.tag));
-
+        ensure!(
+            status.tag == u32::from_le_bytes(command.tag),
+            "invalid command tag"
+        );
+        ensure!(
+            status.status == CommandStatus::Passed,
+            "command status indicates failure, full status: {status:#?}"
+        );
         Ok((response_buf, status))
     }
 }
