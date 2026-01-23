@@ -1,3 +1,4 @@
+pub mod scsi;
 pub mod usb;
 
 use color_eyre::{Result, eyre::ContextCompat};
@@ -19,22 +20,5 @@ async fn main() -> Result<()> {
         .next()
         .wrap_err("at least one usb drive should be connected")?;
     let drive = usb::USBDrive::new(device).await?;
-
-    //let mut devices = storage::UsbMassStorage::list()?;
-    //if let Some(closed) = devices.pop() {
-    //    let mut dev = closed.open()?;
-    //    let mut buf = [0_u8, 36];
-    //    let cmd = InquiryCommand::new(0);
-    //    dev.execute_command(
-    //        1,
-    //        buf.len() as u32,
-    //        commands::cbw::Direction::In,
-    //        &cmd,
-    //        Some(&mut buf),
-    //    )?;
-    //
-    //    dbg!(&buf);
-    //}
-
     Ok(())
 }

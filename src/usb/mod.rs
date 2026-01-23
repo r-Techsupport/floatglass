@@ -1,24 +1,6 @@
 //! Interactions with USB mass storage devices
 
 mod cbw;
-mod scsi;
-
-// Scratchpad:
-// https://www.downtowndougbrown.com/2018/12/usb-mass-storage-with-embedded-devices-tips-and-quirks/
-
-// When a flash drive is plugged in, the computer looks at its device,
-// configuration, interface, and endpoint descriptors to determine what type of device it is.
-// Flash drives use the mass storage class (0x08), SCSI transparent command set subclass (0x06),
-// and the bulk-only transport protocol (0x50). The specification indicates that this should be
-// specified in the interface descriptor, so the device descriptor should indicate the class is
-// defined at the interface level.
-
-// What does this all mean? It just means that there will be two bulk endpoints: one for sending data from the host computer to the flash drive (OUT) and one for receiving data from the flash drive to the computer (IN). Data sent and received on these endpoints will adhere to the bulk-only transport protocol specification linked above. In addition, there are a few commands (read max LUN and bulk-only reset) that are sent over the control endpoint.
-
-// The host starts out by sending a 31-byte command block wrapper (CBW) to the drive, optionally sending or receiving data depending on what command it is, and then reading a 13-byte command status wrapper (CSW) containing the result of the command. The CBW and CSW are simply wrappers around Small Computer System Interface (SCSI) commands. Descriptions of the SCSI commands are available in the last two specifications I linked above.
-
-// That’s all there is to it... except I haven’t said anything about which SCSI commands you’re supposed to use, or when. SCSI is a huge standard. Reading the entire standard document would take a ridiculous amount of time, and it wouldn’t really help you much anyway. Unfortunately, the standards don’t provide a section entitled “recommended sequence of commands for talking to flash drives over USB”.
-
 use std::time::Duration;
 
 use color_eyre::Result;
@@ -30,8 +12,8 @@ use nusb::{Device, DeviceInfo, list_devices};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info, warn};
 
+use crate::scsi;
 use crate::usb::cbw::{CommandBlockWrapper, CommandStatus, CommandStatusWrapper, TagGenerator};
-
 /// https://www.usb.org/defined-class-codes
 const MASS_STORAGE_USB_CLASS: u8 = 0x08;
 /// SCSI transparent set subclass

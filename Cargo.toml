@@ -9,4 +9,3 @@ nusb = { version = "0.2.0", features = ["tokio"] }
 tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "tokio-macros", "io-util"] }
 tracing = { version = "0.1.41", features = ["log", "async-await"] }
 tracing-subscriber = "0.3.19"
-usbh-scsi = "0.1.0"
