@@ -1,7 +1,5 @@
-//! A USB packet containing a command block wrapper and associated
-//! information.
+//! Code specific to the USB mass storage bulk only protocol.
 
-use super::scsi;
 use color_eyre::eyre::ensure;
 
 /// Signature that identifies a packet as a CBW.
@@ -9,7 +7,7 @@ use color_eyre::eyre::ensure;
 /// This packet contains the below magic number (little endian).
 ///
 /// See USB Mass Storage Class - Bulk Only Transport, section 5
-const CBW_SIGNATURE: u32 = 0x43425355;
+pub const CBW_SIGNATURE: u32 = 0x43425355;
 /// Signature that identifies a packet as a CSW.
 ///
 /// The packet will start with the below magic number (little endian).
@@ -18,6 +16,7 @@ const CSW_SIGNATURE: u32 = 0x53425355;
 /// A command block wrapper is *always* 31 bytes in size*
 const CBW_SIZE: usize = 31;
 
+#[derive(Copy, Clone)]
 pub enum CBWDirection {
     /// Data-Out: from host to the device
     DataOut = 0b100_0000,
@@ -43,7 +42,7 @@ pub struct CommandBlockWrapper {
     /// indicating a CBW."
     ///
     /// This value should always be set to [`CBW_SIGNATURE`]
-    signature: [u8; 4],
+    pub signature: [u8; 4],
     /// `dCBWTag` - "A Command Block Tag sent by the host. The device shall echo
     /// the contents of this field back to the host in the [tag] field of the associated CSW.
     /// The [tag] positvely associates a CSW with the corrosponding CBW"
@@ -78,28 +77,10 @@ pub struct CommandBlockWrapper {
     /// the significant bytes shall be transferred first, beginning with the byte
     /// at offset 15 (Fh). The device shall ignore the content of *CBWCB* field
     /// past the offset (15 + *bCBWCBLength* - 1)."
-    pub command: [u8; scsi::MAX_CDB_SIZE],
+    pub command: [u8; 16],
 }
 
 impl CommandBlockWrapper {
-    /// Creates a new [`CommandBlockWrapper`].
-    pub fn new(
-        command: scsi::CommandBlock,
-        data_transfer_length: u32,
-        direction: CBWDirection,
-        tag: u32,
-    ) -> Self {
-        Self {
-            signature: CBW_SIGNATURE.to_le_bytes(),
-            tag: tag.to_le_bytes(),
-            data_transfer_length: data_transfer_length.to_le_bytes(),
-            direction,
-            lun: 0,
-            command_block_length: command.len() as u8,
-            command: command.get(),
-        }
-    }
-
     /// Returns a slice containing the entirety of `self` that is exactly [`CBW_SIZE`] bytes in length
     pub fn as_slice(&'_ self) -> &[u8] {
         const {

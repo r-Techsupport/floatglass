@@ -20,5 +20,6 @@ async fn main() -> Result<()> {
         .next()
         .wrap_err("at least one usb drive should be connected")?;
     let drive = usb::USBDrive::new(device).await?;
+    let mut _scsi_device = scsi::SCSIDevice::new(drive).await?;
     Ok(())
 }
