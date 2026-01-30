@@ -38,12 +38,19 @@ impl SCSIDevice {
         info!("starting device configuration");
         // 3. Keep trying the sequence of "TEST UNIT READY" followed by "INQUIRY"
         // until they both return success back-to-back
-        debug!("Submitting TEST UNIT READY");
+        debug!("submitting TEST UNIT READY");
         drive.submit_cbw(command::test_unit_ready()).await?;
 
-        debug!("Submitting INQUIRY");
+        debug!("submitting INQUIRY");
         // TODO: actually make something of the response, i.e deserialize into response::InquiryResponse
         let _response = drive.submit_cbw(command::inquiry()).await?;
+        debug!("submitting PREVENT ALLOW MEDIUM REMOVAL");
+        // According to the reference blog post, the result can be ignored, and many
+        // drives do not support this command, but it's submitted anyway to mimic other
+        // operating systems.
+        let _ = drive
+            .submit_cbw(command::prevent_allow_medium_removal())
+            .await;
         Ok(Self { drive })
     }
 

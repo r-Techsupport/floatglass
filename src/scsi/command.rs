@@ -80,6 +80,27 @@ pub fn inquiry() -> CommandBlock<'static> {
     }
 }
 
+/// "The PREVENT ALLOW MEDIUM REMOVAL" command (see table 77) requests that
+/// the target enable or disable the removal of the medium in the logical unit.
+/// The logical unit shall not allow medium removal if any initiator current
+/// has medium removal prevented."
+///
+/// SPC-2 7.12
+pub fn prevent_allow_medium_removal() -> CommandBlock<'static> {
+    CommandBlock {
+        command: ShortCommandDescriptor {
+            operation_code: OpCode::PreventAllowMediumRemoval,
+            logical_block_address: [0, 0, 0],
+            // See table 78, prohibits all form of medium removal
+            misc_len: 0b0000_0011,
+            control: 0,
+        }
+        .as_slice(),
+        direction: CBWDirection::NonDirectional,
+        data_transfer_len: 0,
+    }
+}
+
 /// Operation codes for a Command Descriptor Block, specifying what operation you want
 /// to do as described in 7.1 of SPC-2.
 ///
@@ -92,6 +113,8 @@ pub enum OpCode {
     TestUnitReady = 0x0,
     /// SPC-2 7.3
     Inquiry = 0x12,
+    /// SPC-2 7.12
+    PreventAllowMediumRemoval = 0x13,
 }
 
 /// As described in 4.3.2 table 1, a typical CDB for 6 byte commands.
