@@ -8,14 +8,17 @@
 //! the more granular [`ShortCommandDescriptor`] and [`LongCommandDescriptor`] structs.
 
 use super::command_descriptor::*;
-use crate::usb::cbw::CBWDirection;
+use crate::{
+    scsi::response::{ResponseParser, inquiry_response, no_response},
+    usb::cbw::CBWDirection,
+};
 
 /// A serialized command block ready to be submitted
 pub struct CommandBlock<'a> {
     command: &'a [u8],
     pub direction: CBWDirection,
     pub data_transfer_len: u32,
-    // TODO: figure out some way to store information about the response type here
+    pub response_parser: ResponseParser,
 }
 
 impl CommandBlock<'_> {
@@ -56,6 +59,7 @@ pub fn test_unit_ready() -> CommandBlock<'static> {
         .as_slice(),
         direction: CBWDirection::NonDirectional,
         data_transfer_len: 0,
+        response_parser: no_response,
     }
 }
 
@@ -78,6 +82,7 @@ pub fn inquiry() -> CommandBlock<'static> {
         .as_slice(),
         direction: CBWDirection::DataIn,
         data_transfer_len: 36,
+        response_parser: inquiry_response,
     }
 }
 
@@ -99,6 +104,30 @@ pub fn prevent_allow_medium_removal() -> CommandBlock<'static> {
         .as_slice(),
         direction: CBWDirection::NonDirectional,
         data_transfer_len: 0,
+        response_parser: no_response,
+    }
+}
+
+/// "The `READ CAPACITY` command provides a means for the application client
+/// to request information regarding the capacity of the block device."
+///
+/// SBC-2 5.1.10
+pub fn read_capacity() -> CommandBlock<'static> {
+    CommandBlock {
+        command: X10CommandDescriptor {
+            operation_code: OpCode::ReadCapacity,
+            // Request a "long response" (SBC-2 table 29),
+            // with the relative response field set to zero (required
+            // for long responses)
+            service_action: 0b0000_0010,
+            logical_block_address: 0_u32.to_le_bytes(),
+            misc_len: 0_u16.to_le_bytes(),
+            control: 0,
+        }
+        .as_slice(),
+        direction: CBWDirection::DataIn,
+        data_transfer_len: 12,
+        response_parser: todo!(),
     }
 }
 
@@ -114,6 +143,7 @@ mod tests {
             command: &cmd,
             direction: CBWDirection::NonDirectional,
             data_transfer_len: 0,
+            response_parser: no_response,
         };
         let mut serialized_cb = cb.get().into_iter();
         assert!(serialized_cb.next() == Some(1));

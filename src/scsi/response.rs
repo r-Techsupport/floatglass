@@ -2,8 +2,31 @@
 
 use color_eyre::eyre::ensure;
 
+pub type ResponseParser = fn(&[u8]) -> color_eyre::Result<Response>;
+
+pub enum Response<'a> {
+    Inquiry(&'a Inquiry),
+
+    None,
+}
+
+pub fn no_response(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
+    ensure!(buf.len() == 0);
+    Ok(Response::None)
+}
+
+pub fn inquiry_response(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
+    ensure!(
+        buf.len() == std::mem::size_of::<Inquiry>(),
+        "provided slice length does not match struct size"
+    );
+    // SAFETY: it's been validated that the slice size matches the struct size
+    let s: &'_ Inquiry = unsafe { &*(buf.as_ptr() as *const Inquiry) };
+    Ok(Response::Inquiry(s))
+}
+
 #[repr(C, packed)]
-pub struct InquiryResponse {
+pub struct Inquiry {
     /// Contains both the PERIPHERAL QUALIFIER (bits 7:5) and PERIPHERAL DEVICE TYPE (bits 4:0)
     /// and PERIPHERAL DEVICE TYPE (bits 4:0) fields.
     ///
@@ -23,16 +46,4 @@ pub struct InquiryResponse {
     pub peripheral_info: u8,
     /// Fields that are not needed
     unparsed: [u8; 35],
-}
-
-impl InquiryResponse {
-    pub fn from_slice(buf: &[u8]) -> color_eyre::Result<&InquiryResponse> {
-        ensure!(
-            buf.len() == std::mem::size_of::<InquiryResponse>(),
-            "provided slice length does not match struct size"
-        );
-        // SAFETY: it's been validated that the slice size matches the struct size
-        let s: &'_ InquiryResponse = unsafe { &*(buf.as_ptr() as *const InquiryResponse) };
-        Ok(s)
-    }
 }

@@ -14,6 +14,8 @@ pub enum OpCode {
     Inquiry = 0x12,
     /// SPC-2 7.12
     PreventAllowMediumRemoval = 0x13,
+    /// SBC-2 5.1.10, table 27
+    ReadCapacity = 0x25,
 }
 
 /// As described in SPC-2 4.3.2 table 1, a typical CDB for 6 byte commands.
