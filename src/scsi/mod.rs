@@ -11,6 +11,7 @@
 //!   about commands specific to block devices.
 
 pub mod command;
+mod command_descriptor;
 pub mod response;
 
 use color_eyre::Result;
