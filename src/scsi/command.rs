@@ -9,7 +9,7 @@
 
 use super::command_descriptor::*;
 use crate::{
-    scsi::response::{ResponseParser, inquiry_response, no_response},
+    scsi::response::{ResponseParser, inquiry_response, no_response, read_capacity_response},
     usb::cbw::CBWDirection,
 };
 
@@ -116,24 +116,22 @@ pub fn read_capacity() -> CommandBlock<'static> {
     CommandBlock {
         command: X10CommandDescriptor {
             operation_code: OpCode::ReadCapacity,
-            // Request a "long response" (SBC-2 table 29),
-            // with the relative response field set to zero (required
-            // for long responses)
-            service_action: 0b0000_0010,
-            logical_block_address: 0_u32.to_le_bytes(),
-            misc_len: 0_u16.to_le_bytes(),
+            service_action: 0,
+            logical_block_address: [0, 0, 0, 0],
+            misc_len: [0, 0],
             control: 0,
         }
         .as_slice(),
         direction: CBWDirection::DataIn,
-        data_transfer_len: 12,
-        response_parser: todo!(),
+        data_transfer_len: 8,
+        response_parser: read_capacity_response,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::CommandBlock;
+    use super::no_response;
     use crate::usb::cbw::CBWDirection;
     #[test]
     fn validate_command_block() {

@@ -6,12 +6,15 @@ pub type ResponseParser = fn(&[u8]) -> color_eyre::Result<Response>;
 
 pub enum Response<'a> {
     Inquiry(&'a Inquiry),
-
+    /// A tuple of (DRIVE SIZE, BLOCK_SIZE)
+    /// where drive size is in blocks, and block size
+    /// is in bytes
+    ReadCapacity(u32, u32),
     None,
 }
 
 pub fn no_response(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
-    ensure!(buf.len() == 0);
+    ensure!(buf.is_empty());
     Ok(Response::None)
 }
 
@@ -23,6 +26,22 @@ pub fn inquiry_response(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
     // SAFETY: it's been validated that the slice size matches the struct size
     let s: &'_ Inquiry = unsafe { &*(buf.as_ptr() as *const Inquiry) };
     Ok(Response::Inquiry(s))
+}
+
+/// Described in SBC-2 Table 29
+pub fn read_capacity_response(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
+    ensure!(buf.len() == 8);
+    let mut capacity_bytes = [0u8; 4];
+    capacity_bytes.copy_from_slice(&buf[0..4]);
+    let mut block_size_bytes = [0u8; 4];
+    block_size_bytes.copy_from_slice(&buf[4..]);
+    // Yes, these are big endian while everything else is little endian, no, I don't know why
+    Ok(Response::ReadCapacity(
+        // The response technically contains the address of the last block, so we need to
+        // correct for the zero-based index
+        u32::from_be_bytes(capacity_bytes) + 1,
+        u32::from_be_bytes(block_size_bytes),
+    ))
 }
 
 #[repr(C, packed)]
