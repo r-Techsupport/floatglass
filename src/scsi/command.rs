@@ -128,6 +128,29 @@ pub fn read_capacity() -> CommandBlock<'static> {
     }
 }
 
+/// "The `MODE SENSE(6)` command provides a means for the device server to report parameters
+/// to an application client. It is a complementary command to the MODE SELECT (6) command.
+/// Device servers that implement the MODE SENSE (6) command shall also implement the MODE
+/// SELECT(6) command"
+///
+/// SPC-2 7.8
+pub fn mode_sense() -> CommandBlock<'static> {
+    // 0 - false. 1 - true
+    let disable_block_descriptors: u8 = 0;
+    CommandBlock {
+        command: X6CommandDescriptor {
+            operation_code: OpCode::ModeSense,
+            logical_block_address: [1 << disable_block_descriptors, 0, 0],
+            misc_len: 255,
+            control: 0,
+        }
+        .as_slice(),
+        direction: CBWDirection::DataIn,
+        data_transfer_len: 192,
+        response_parser: no_response,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::CommandBlock;

@@ -14,6 +14,8 @@ pub enum OpCode {
     Inquiry = 0x12,
     /// SPC-2 7.12
     PreventAllowMediumRemoval = 0x13,
+    /// SPC-2 7.8.1
+    ModeSense = 0x1A,
     /// SBC-2 5.1.10, table 27
     ReadCapacity = 0x25,
 }
