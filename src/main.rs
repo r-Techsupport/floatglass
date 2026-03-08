@@ -1,7 +1,7 @@
 pub mod scsi;
 pub mod usb;
 
-use color_eyre::{Result, eyre::ContextCompat};
+use color_eyre::{eyre::ContextCompat, Result};
 use tracing::{info, level_filters::LevelFilter};
 use usb::enumerate_usb_storage_devices;
 

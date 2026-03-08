@@ -20,7 +20,10 @@ use color_eyre::{Result, eyre::Context};
 use tracing::{debug, info};
 
 use crate::{
-    scsi::response::{Response, ResponseParser},
+    scsi::{
+        command::CommandBlock,
+        response::{Response, ResponseParser},
+    },
     usb::USBDrive,
 };
 
@@ -89,10 +92,7 @@ impl SCSIDevice {
     ///
     /// This function will submit the command to the device, and wait for the
     /// response.
-    pub async fn issue_command(
-        &mut self,
-        command: command::CommandBlock<'_>,
-    ) -> Result<ResponseBytes<'_>> {
+    pub async fn issue_command(&mut self, command: CommandBlock) -> Result<ResponseBytes<'_>> {
         let parser = command.response_parser;
         let response_bytes =
             tokio::time::timeout(Duration::from_millis(1000), self.drive.submit_cbw(command))

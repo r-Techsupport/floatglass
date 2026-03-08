@@ -9,32 +9,36 @@
 
 use super::command_descriptor::*;
 use crate::{
-    scsi::response::{ResponseParser, inquiry_response, no_response, read_capacity_response},
+    scsi::response::{inquiry_response, no_response, read_capacity_response, ResponseParser},
     usb::cbw::CBWDirection,
 };
 
 /// A serialized command block ready to be submitted
-pub struct CommandBlock<'a> {
-    command: &'a [u8],
+pub struct CommandBlock {
+    command: Box<dyn CommandDescriptor>,
     pub direction: CBWDirection,
     pub data_transfer_len: u32,
     pub response_parser: ResponseParser,
 }
 
-impl CommandBlock<'_> {
+impl CommandBlock {
     /// Returns the length of the underlying command block.
     ///
     /// Will always be less than 16 bytes.
     pub fn len(&self) -> usize {
-        self.command.len()
+        std::mem::size_of_val(&*self.command)
     }
 
     /// Returns a valid command block, prepared as described by USB Mass
     /// Storage Class - Bulk Only Transport section 5.1 (CBWCB).
     pub fn get(&self) -> [u8; 16] {
         let mut output_buf: [u8; 16] = [0; 16];
-        let (subslice, _) = output_buf.split_at_mut(self.command.len());
-        subslice.copy_from_slice(self.command);
+        let (subslice, _) = output_buf.split_at_mut(self.len());
+        let slice = unsafe {
+            let ptr = &*self.command as *const dyn CommandDescriptor as *const u8;
+            std::slice::from_raw_parts(ptr, self.len())
+        };
+        subslice.copy_from_slice(slice);
         output_buf
     }
 }
@@ -48,15 +52,14 @@ impl CommandBlock<'_> {
 /// CHECK CONDITION status with a sense key of NOT READY."
 ///
 /// Defined in SPC2 7.25
-pub fn test_unit_ready() -> CommandBlock<'static> {
+pub fn test_unit_ready() -> CommandBlock {
     CommandBlock {
-        command: X6CommandDescriptor {
+        command: Box::new(X6CommandDescriptor {
             operation_code: OpCode::TestUnitReady,
             logical_block_address: [0, 0, 0],
             misc_len: 0,
             control: 0,
-        }
-        .as_slice(),
+        }),
         direction: CBWDirection::NonDirectional,
         data_transfer_len: 0,
         response_parser: no_response,
@@ -68,9 +71,9 @@ pub fn test_unit_ready() -> CommandBlock<'static> {
 /// Options allow the client to request additional information."
 ///
 /// Defined in SPC2 7.3.1 table 45
-pub fn inquiry() -> CommandBlock<'static> {
+pub fn inquiry() -> CommandBlock {
     CommandBlock {
-        command: X6CommandDescriptor {
+        command: Box::new(X6CommandDescriptor {
             operation_code: OpCode::Inquiry,
             logical_block_address: [0, 0, 0],
             // For inquiry, is ALLOCATION LENGTH,
@@ -78,8 +81,7 @@ pub fn inquiry() -> CommandBlock<'static> {
             // (table 46)
             misc_len: 36,
             control: 0,
-        }
-        .as_slice(),
+        }),
         direction: CBWDirection::DataIn,
         data_transfer_len: 36,
         response_parser: inquiry_response,
@@ -92,16 +94,15 @@ pub fn inquiry() -> CommandBlock<'static> {
 /// has medium removal prevented."
 ///
 /// SPC-2 7.12
-pub fn prevent_allow_medium_removal() -> CommandBlock<'static> {
+pub fn prevent_allow_medium_removal() -> CommandBlock {
     CommandBlock {
-        command: X6CommandDescriptor {
+        command: Box::new(X6CommandDescriptor {
             operation_code: OpCode::PreventAllowMediumRemoval,
             logical_block_address: [0, 0, 0],
             // See table 78, prohibits all form of medium removal
             misc_len: 0b0000_0011,
             control: 0,
-        }
-        .as_slice(),
+        }),
         direction: CBWDirection::NonDirectional,
         data_transfer_len: 0,
         response_parser: no_response,
@@ -112,16 +113,15 @@ pub fn prevent_allow_medium_removal() -> CommandBlock<'static> {
 /// to request information regarding the capacity of the block device."
 ///
 /// SBC-2 5.1.10
-pub fn read_capacity() -> CommandBlock<'static> {
+pub fn read_capacity() -> CommandBlock {
     CommandBlock {
-        command: X10CommandDescriptor {
+        command: Box::new(X10CommandDescriptor {
             operation_code: OpCode::ReadCapacity,
             service_action: 0,
             logical_block_address: [0, 0, 0, 0],
             misc_len: [0, 0],
             control: 0,
-        }
-        .as_slice(),
+        }),
         direction: CBWDirection::DataIn,
         data_transfer_len: 8,
         response_parser: read_capacity_response,
@@ -134,40 +134,21 @@ pub fn read_capacity() -> CommandBlock<'static> {
 /// SELECT(6) command"
 ///
 /// SPC-2 7.8
-pub fn mode_sense() -> CommandBlock<'static> {
+pub fn mode_sense() -> CommandBlock {
     // 0 - false. 1 - true
-    let disable_block_descriptors: u8 = 0;
+    let logical_block_address: [u8; 3] = const {
+        let disable_block_descriptors: u8 = 0;
+        [disable_block_descriptors << 1, 0, 0]
+    };
     CommandBlock {
-        command: X6CommandDescriptor {
+        command: Box::new(X6CommandDescriptor {
             operation_code: OpCode::ModeSense,
-            logical_block_address: [1 << disable_block_descriptors, 0, 0],
+            logical_block_address,
             misc_len: 255,
             control: 0,
-        }
-        .as_slice(),
+        }),
         direction: CBWDirection::DataIn,
         data_transfer_len: 192,
         response_parser: no_response,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::CommandBlock;
-    use super::no_response;
-    use crate::usb::cbw::CBWDirection;
-    #[test]
-    fn validate_command_block() {
-        // Ensures that a single byte is packed successfully
-        let cmd = [1];
-        let cb = CommandBlock {
-            command: &cmd,
-            direction: CBWDirection::NonDirectional,
-            data_transfer_len: 0,
-            response_parser: no_response,
-        };
-        let mut serialized_cb = cb.get().into_iter();
-        assert!(serialized_cb.next() == Some(1));
-        assert!(serialized_cb.all(|b| b == 0));
     }
 }

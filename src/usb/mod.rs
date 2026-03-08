@@ -135,7 +135,7 @@ impl USBDrive {
     #[tracing::instrument(skip_all)]
     pub async fn submit_cbw(
         &mut self,
-        command_block: scsi::command::CommandBlock<'_>,
+        command_block: scsi::command::CommandBlock,
     ) -> Result<&[u8]> {
         let command = CommandBlockWrapper {
             signature: cbw::CBW_SIGNATURE.to_le_bytes(),
@@ -162,7 +162,7 @@ impl USBDrive {
         let status_bytes = &mut status_bytes[..13];
         self.bulk_read.read_exact(response_bytes).await?;
         debug!("response buffer filled with {} bytes", response_bytes.len());
-        // The status is sent after the response? maybe?
+        // The status is sent after the response
         self.bulk_read.read_exact(status_bytes).await?;
         debug!("status buffer filled with {} bytes", status_bytes.len());
 

@@ -7,6 +7,7 @@
 /// as needed
 #[repr(u8)]
 #[non_exhaustive]
+#[derive(Copy, Clone)]
 pub enum OpCode {
     /// SPC-2 7.25
     TestUnitReady = 0x0,
@@ -169,13 +170,4 @@ pub struct X16CommandDescriptor {
 
 impl CommandDescriptor for X16CommandDescriptor {}
 
-pub trait CommandDescriptor: Sized {
-    fn as_slice(&'_ self) -> &[u8] {
-        // SAFETY: A struct is the size of itself
-        let slice: &'_ [u8] = unsafe {
-            let ptr = self as *const Self as *const u8;
-            std::slice::from_raw_parts(ptr, std::mem::size_of::<Self>())
-        };
-        slice
-    }
-}
+pub trait CommandDescriptor {}
