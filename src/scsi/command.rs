@@ -8,17 +8,14 @@
 //! the more granular [`ShortCommandDescriptor`] and [`LongCommandDescriptor`] structs.
 
 use super::command_descriptor::*;
-use crate::{
-    scsi::response::{inquiry_response, no_response, read_capacity_response, ResponseParser},
-    usb::cbw::CBWDirection,
-};
+use crate::{scsi::response, usb::cbw::CBWDirection};
 
 /// A serialized command block ready to be submitted
 pub struct CommandBlock {
     command: Box<dyn CommandDescriptor>,
     pub direction: CBWDirection,
     pub data_transfer_len: u32,
-    pub response_parser: ResponseParser,
+    pub response_parser: response::ResponseParser,
 }
 
 impl CommandBlock {
@@ -43,6 +40,28 @@ impl CommandBlock {
     }
 }
 
+/// Read `transfer_len` contiguous blocks from the device, starting at `logical_block_address`.
+///
+/// "The READ (10) command request that the device server transfer data to the application client."
+///
+/// SBC-2 5.1.7
+pub fn read(logical_block_address: u32, transfer_len: u16) -> CommandBlock {
+    CommandBlock {
+        command: Box::new(X10CommandDescriptor {
+            operation_code: OpCode::Read,
+            // Support for DPO, FUA, and RELADR is currently unimplemented because it has been
+            // deemed unnecessary
+            service_action: 0,
+            logical_block_address: logical_block_address.to_be_bytes(),
+            misc_len: transfer_len.to_be_bytes(),
+            control: 0,
+        }),
+        direction: CBWDirection::NonDirectional,
+        data_transfer_len: 0,
+        response_parser: response::no_response,
+    }
+}
+
 /// "The TEST UNIT READY command provides a means to check if the logical unit is ready.
 ///
 /// If the logical unit is able to accept an appropriate medium access command without
@@ -62,7 +81,7 @@ pub fn test_unit_ready() -> CommandBlock {
         }),
         direction: CBWDirection::NonDirectional,
         data_transfer_len: 0,
-        response_parser: no_response,
+        response_parser: response::no_response,
     }
 }
 
@@ -84,7 +103,7 @@ pub fn inquiry() -> CommandBlock {
         }),
         direction: CBWDirection::DataIn,
         data_transfer_len: 36,
-        response_parser: inquiry_response,
+        response_parser: response::inquiry,
     }
 }
 
@@ -105,7 +124,7 @@ pub fn prevent_allow_medium_removal() -> CommandBlock {
         }),
         direction: CBWDirection::NonDirectional,
         data_transfer_len: 0,
-        response_parser: no_response,
+        response_parser: response::no_response,
     }
 }
 
@@ -124,7 +143,7 @@ pub fn read_capacity() -> CommandBlock {
         }),
         direction: CBWDirection::DataIn,
         data_transfer_len: 8,
-        response_parser: read_capacity_response,
+        response_parser: response::read_capacity,
     }
 }
 
@@ -135,20 +154,20 @@ pub fn read_capacity() -> CommandBlock {
 ///
 /// SPC-2 7.8
 pub fn mode_sense() -> CommandBlock {
-    // 0 - false. 1 - true
     let logical_block_address: [u8; 3] = const {
-        let disable_block_descriptors: u8 = 0;
-        [disable_block_descriptors << 1, 0, 0]
+        // 0 - false. 1 - true
+        let disable_block_descriptors: u8 = 1;
+        [disable_block_descriptors << 3, 0x3F, 0]
     };
     CommandBlock {
         command: Box::new(X6CommandDescriptor {
             operation_code: OpCode::ModeSense,
             logical_block_address,
-            misc_len: 255,
+            misc_len: 192,
             control: 0,
         }),
         direction: CBWDirection::DataIn,
         data_transfer_len: 192,
-        response_parser: no_response,
+        response_parser: response::mode_sense,
     }
 }

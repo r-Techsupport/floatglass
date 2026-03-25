@@ -10,6 +10,8 @@ pub enum Response<'a> {
     /// where drive size is in blocks, and block size
     /// is in bytes
     ReadCapacity(u32, u32),
+    /// True if the drive is read-only
+    ModeSense(bool),
     None,
 }
 
@@ -18,7 +20,7 @@ pub fn no_response(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
     Ok(Response::None)
 }
 
-pub fn inquiry_response(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
+pub fn inquiry(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
     ensure!(
         buf.len() == std::mem::size_of::<Inquiry>(),
         "provided slice length does not match struct size"
@@ -29,7 +31,7 @@ pub fn inquiry_response(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
 }
 
 /// Described in SBC-2 Table 29
-pub fn read_capacity_response(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
+pub fn read_capacity(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
     ensure!(buf.len() == 8);
     let mut capacity_bytes = [0u8; 4];
     capacity_bytes.copy_from_slice(&buf[0..4]);
@@ -42,6 +44,14 @@ pub fn read_capacity_response(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
         u32::from_be_bytes(capacity_bytes) + 1,
         u32::from_be_bytes(block_size_bytes),
     ))
+}
+
+/// "if bit 6 of byte 2 is set, the drive is read only"
+pub fn mode_sense(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
+    ensure!(buf.len() == 192);
+    let read_only = buf[2] & 0b_0100_0000 != 0;
+    // I'm not confident that this is implemented correctly
+    Ok(Response::ModeSense(read_only))
 }
 
 #[repr(C, packed)]

@@ -4,11 +4,11 @@ pub mod cbw;
 use std::time::Duration;
 
 use color_eyre::Result;
-use color_eyre::eyre::{ContextCompat, ensure};
+use color_eyre::eyre::{ContextCompat, bail, ensure};
 use nusb::descriptors::TransferType;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Bulk, ControlIn, ControlType, Direction, In, Out};
-use nusb::{Device, DeviceInfo, list_devices};
+use nusb::{Device, DeviceInfo, Endpoint, Interface, list_devices};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info, warn};
 
@@ -29,7 +29,6 @@ const MAX_LUN_REQUEST: ControlIn = ControlIn {
     index: 0,
     length: 1,
 };
-
 /// Returns a list of every USB storage device currently connected to the host machine
 pub async fn enumerate_usb_storage_devices() -> Result<impl Iterator<Item = DeviceInfo>> {
     let all_usb_devices = list_devices().await?;
@@ -50,7 +49,10 @@ pub async fn enumerate_usb_storage_devices() -> Result<impl Iterator<Item = Devi
 
 pub struct USBDrive {
     bulk_write: EndpointWrite<Bulk>,
+    bulk_in_endpoint: Endpoint<Bulk, In>,
     bulk_read: EndpointRead<Bulk>,
+    bulk_out_endpoint: Endpoint<Bulk, Out>,
+    interface: Interface,
     tag_generator: TagGenerator,
     response_buf: Vec<u8>,
 }
@@ -104,18 +106,19 @@ impl USBDrive {
         );
 
         debug!("initializing endpoints");
+        let bulk_in_address =
+            bulk_in_address.wrap_err("USB device has no exposed Bulk-In endpoint")?;
+        let bulk_out_address =
+            bulk_out_address.wrap_err("USB device has no exposed Bulk-Out endpoint")?;
         // Initialize bulk in/out endpoints
+        let bulk_in_endpoint = interface.endpoint::<Bulk, In>(bulk_in_address)?;
+        let bulk_out_endpoint = interface.endpoint::<Bulk, Out>(bulk_in_address)?;
         let writer = interface
-            .endpoint::<Bulk, Out>(
-                bulk_out_address.wrap_err("USB device has no exposed Bulk-In endpoint")?,
-            )?
+            .endpoint::<Bulk, Out>(bulk_out_address)?
             .writer(128)
             .with_num_transfers(8);
-
         let reader = interface
-            .endpoint::<Bulk, In>(
-                bulk_in_address.wrap_err("USB device has no exposed Bulk-Out endpoint")?,
-            )?
+            .endpoint::<Bulk, In>(bulk_in_address)?
             .reader(128)
             .with_num_transfers(8);
         // At this point we can talk to the device, but no usb mass storage specific
@@ -123,9 +126,13 @@ impl USBDrive {
         let device = Self {
             bulk_write: writer,
             bulk_read: reader,
+            bulk_in_endpoint,
+            bulk_out_endpoint,
+            interface,
             tag_generator: TagGenerator::new(),
             response_buf: vec![0; 2048],
         };
+
         Ok(device)
     }
 
@@ -137,6 +144,36 @@ impl USBDrive {
         &mut self,
         command_block: scsi::command::CommandBlock,
     ) -> Result<&[u8]> {
+        let (response_bytes, status) = self.submit_cbw_manual(&command_block).await?;
+        //let mut response_bytes = response_bytes.to_vec();
+        // "The host shall perform a Reset Recovery" when phase error status is returned in the
+        // CSW
+        ensure!(
+            status.data_residue == 0,
+            "support for data residue not implemented"
+        );
+        match status.status {
+            CommandStatus::Passed => Ok(response_bytes),
+            CommandStatus::PhaseError => {
+                warn!("phase error detected, beginning reset recovery");
+                self.reset_recovery().await?;
+                let (response_bytes, status) = self.submit_cbw_manual(&command_block).await?;
+                ensure!(
+                    status.status == CommandStatus::Passed,
+                    "command failed after reset recovery performed"
+                );
+                Ok(response_bytes)
+            }
+            CommandStatus::Failed => {
+                bail!("command failed completely");
+            }
+        }
+    }
+
+    async fn submit_cbw_manual(
+        &'_ mut self,
+        command_block: &scsi::command::CommandBlock,
+    ) -> Result<(&'_ [u8], &'_ CommandStatusWrapper)> {
         let command = CommandBlockWrapper {
             signature: cbw::CBW_SIGNATURE.to_le_bytes(),
             command: command_block.get(),
@@ -160,29 +197,54 @@ impl USBDrive {
         let (response_bytes, status_bytes) = self.response_buf.split_at_mut(required_capacity);
         // Sometimes there's leftover space in the response buffer that we don't care about
         let status_bytes = &mut status_bytes[..13];
-        self.bulk_read.read_exact(response_bytes).await?;
-        debug!("response buffer filled with {} bytes", response_bytes.len());
+        debug!(
+            "device sent a {} byte response",
+            self.bulk_read.read(response_bytes).await?
+        );
+        //debug!("response buffer filled with {} bytes", response_bytes.len());
         // The status is sent after the response
         self.bulk_read.read_exact(status_bytes).await?;
         debug!("status buffer filled with {} bytes", status_bytes.len());
 
         debug!("response recieved");
         // Validate the status
-        {
-            let status = CommandStatusWrapper::from_slice(status_bytes)?;
-            ensure!(
-                status.tag == u32::from_le_bytes(command.tag),
-                "invalid command tag"
-            );
-            ensure!(
-                status.status == CommandStatus::Passed,
-                "command status indicates failure, full status: {status:#?}"
-            );
-            ensure!(
-                status.data_residue == 0,
-                "support for data residue not implemented"
-            );
-        }
-        Ok(response_bytes)
+        let status = CommandStatusWrapper::from_slice(status_bytes)?;
+        ensure!(
+            status.tag == u32::from_le_bytes(command.tag),
+            "invalid command tag"
+        );
+        Ok((response_bytes, status))
+    }
+
+    // Submit a Bulk-Only Mass Storage Reset
+    pub async fn mass_storage_reset(&self) -> color_eyre::Result<()> {
+        // USB Mass Storage Class - Bulk Only Transport: 3.1
+        let request: ControlIn = ControlIn {
+            control_type: ControlType::Class,
+            recipient: nusb::transfer::Recipient::Interface,
+            request: 255,
+            value: 0,
+            index: 0,
+            length: 0,
+        };
+        debug!("requesting mass storage reset");
+        self.interface
+            .control_in(request, Duration::from_millis(500))
+            .await?;
+
+        Ok(())
+    }
+
+    /// Used to reset the device after a phase error.
+    ///
+    /// USB Mass Storage class - Bulk Only Transport 5.3.4
+    pub async fn reset_recovery(&mut self) -> color_eyre::Result<()> {
+        // (a) a Bulk-Only Mass Storage Reset
+        self.mass_storage_reset().await?;
+        // (b) a *Clear Feature HALT* to the Bulk-In endpoint
+        self.bulk_in_endpoint.clear_halt().await?;
+        // (c) a *Clear Feature HALT* to the Bulk-Out endpoint
+        self.bulk_out_endpoint.clear_halt().await?;
+        Ok(())
     }
 }

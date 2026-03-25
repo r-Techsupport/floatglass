@@ -16,7 +16,10 @@ pub mod response;
 
 use std::time::Duration;
 
-use color_eyre::{Result, eyre::Context};
+use color_eyre::{
+    Result,
+    eyre::{Context, ensure},
+};
 use tracing::{debug, info};
 
 use crate::{
@@ -85,6 +88,19 @@ impl SCSIDevice {
         );
         drive.drive_size = drive_size;
         drive.block_size = block_size;
+        debug!("submitting MODE SENSE");
+        let Response::ModeSense(read_only) = drive
+            .issue_command(command::mode_sense())
+            .await?
+            .into_response()?
+        else {
+            unreachable!()
+        };
+        ensure!(!read_only, "the drive is flagged as read-only");
+        // "7. just to be safe, do "TEST UNIT READY" again"
+        debug!("submitting TEST UNIT READY");
+        drive.issue_command(command::test_unit_ready()).await?;
+        info!("device initialization completed");
         Ok(drive)
     }
 
@@ -95,9 +111,9 @@ impl SCSIDevice {
     pub async fn issue_command(&mut self, command: CommandBlock) -> Result<ResponseBytes<'_>> {
         let parser = command.response_parser;
         let response_bytes =
-            tokio::time::timeout(Duration::from_millis(1000), self.drive.submit_cbw(command))
+            tokio::time::timeout(Duration::from_millis(5000), self.drive.submit_cbw(command))
                 .await
-                .context("Drive failed to respond by timeout")??;
+                .context("drive failed to respond by timeout")??;
         Ok(ResponseBytes {
             bytes: response_bytes,
             parser,

@@ -1,9 +1,11 @@
 pub mod scsi;
 pub mod usb;
 
-use color_eyre::{eyre::ContextCompat, Result};
+use color_eyre::{Result, eyre::ContextCompat};
 use tracing::{info, level_filters::LevelFilter};
 use usb::enumerate_usb_storage_devices;
+
+use crate::scsi::command;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -20,6 +22,9 @@ async fn main() -> Result<()> {
         .next()
         .wrap_err("at least one usb drive should be connected")?;
     let drive = usb::USBDrive::new(device).await?;
-    let mut _scsi_device = scsi::SCSIDevice::new(drive).await?;
+    let mut scsi_device = scsi::SCSIDevice::new(drive).await?;
+
+    let first_block = scsi_device.issue_command(command::read(1, 1)).await?.raw();
+    dbg!(first_block);
     Ok(())
 }
