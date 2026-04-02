@@ -40,7 +40,7 @@ pub struct SCSIDevice {
     /// The size of the drive in *blocks*
     drive_size: u32,
     /// The block size of the storage medium in *bytes*
-    block_size: u32,
+    pub block_size: u32,
 }
 
 impl SCSIDevice {
@@ -108,7 +108,7 @@ impl SCSIDevice {
     ///
     /// This function will submit the command to the device, and wait for the
     /// response.
-    pub async fn issue_command(&mut self, command: CommandBlock) -> Result<ResponseBytes<'_>> {
+    pub async fn issue_command(&mut self, command: CommandBlock) -> Result<ResponseBytes> {
         let parser = command.response_parser;
         let response_bytes =
             tokio::time::timeout(Duration::from_millis(5000), self.drive.submit_cbw(command))
@@ -121,19 +121,19 @@ impl SCSIDevice {
     }
 }
 
-pub struct ResponseBytes<'a> {
-    bytes: &'a [u8],
+pub struct ResponseBytes {
+    bytes: Vec<u8>,
     parser: ResponseParser,
 }
 
-impl<'a> ResponseBytes<'a> {
+impl ResponseBytes {
     /// Returns a reference to the slice containing the response.
-    pub fn raw(&self) -> &'a [u8] {
-        self.bytes
+    pub fn raw(&self) -> &[u8] {
+        &self.bytes
     }
 
     /// Deserializes the slice into a [`Response`]
-    pub fn into_response(self) -> Result<Response<'a>> {
-        (self.parser)(self.bytes)
+    pub fn into_response(self) -> Result<Response> {
+        (self.parser)(&self.bytes)
     }
 }

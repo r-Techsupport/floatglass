@@ -1,0 +1,33 @@
+   Compiling floatglass v0.1.0 (/home/arc/projects/rts/floatglass)
+error[E0499]: cannot borrow value as mutable more than once at a time
+   --> src/usb/mod.rs:159:17
+    |
+142 |     #[tracing::instrument(skip_all)]
+    |                                    - return type of async block is Result<&'1 [u8], ErrReport>
+...
+147 |         let (response_bytes, status) = self.submit_cbw_manual(&command_block).await?;
+    |                                        ---- first mutable borrow occurs here
+...
+156 |             CommandStatus::Passed => Ok(response_bytes),
+    |                                      ------------------ returning this value requires that first borrow lasts for `'1`
+...
+159 |                 self.reset_recovery().await?;
+    |                 ^^^^ second mutable borrow occurs here
+
+error[E0499]: cannot borrow value as mutable more than once at a time
+   --> src/usb/mod.rs:160:48
+    |
+142 |     #[tracing::instrument(skip_all)]
+    |                                    - return type of async block is Result<&'1 [u8], ErrReport>
+...
+147 |         let (response_bytes, status) = self.submit_cbw_manual(&command_block).await?;
+    |                                        ---- first mutable borrow occurs here
+...
+156 |             CommandStatus::Passed => Ok(response_bytes),
+    |                                      ------------------ returning this value requires that first borrow lasts for `'1`
+...
+160 |                 let (response_bytes, status) = self.submit_cbw_manual(&command_block).await?;
+    |                                                ^^^^ second mutable borrow occurs here
+
+For more information about this error, try `rustc --explain E0499`.
+error: could not compile `floatglass` (bin "floatglass") due to 2 previous errors

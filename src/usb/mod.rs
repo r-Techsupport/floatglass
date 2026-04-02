@@ -7,7 +7,7 @@ use color_eyre::Result;
 use color_eyre::eyre::{ContextCompat, bail, ensure};
 use nusb::descriptors::TransferType;
 use nusb::io::{EndpointRead, EndpointWrite};
-use nusb::transfer::{Bulk, ControlIn, ControlType, Direction, In, Out};
+use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, Direction, In, Out, Recipient};
 use nusb::{Device, DeviceInfo, Endpoint, Interface, list_devices};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info, warn};
@@ -23,7 +23,7 @@ const MASS_STORAGE_BULK_ONLY_TRANSPORT: u8 = 0x50;
 /// <https://en.wikipedia.org/wiki/Logical_unit_number>
 const MAX_LUN_REQUEST: ControlIn = ControlIn {
     control_type: ControlType::Class,
-    recipient: nusb::transfer::Recipient::Interface,
+    recipient: Recipient::Interface,
     request: 0xfe,
     value: 0,
     index: 0,
@@ -49,9 +49,9 @@ pub async fn enumerate_usb_storage_devices() -> Result<impl Iterator<Item = Devi
 
 pub struct USBDrive {
     bulk_write: EndpointWrite<Bulk>,
-    bulk_in_endpoint: Endpoint<Bulk, In>,
+    bulk_in_address: u8,
     bulk_read: EndpointRead<Bulk>,
-    bulk_out_endpoint: Endpoint<Bulk, Out>,
+    bulk_out_address: u8,
     interface: Interface,
     tag_generator: TagGenerator,
     response_buf: Vec<u8>,
@@ -111,8 +111,6 @@ impl USBDrive {
         let bulk_out_address =
             bulk_out_address.wrap_err("USB device has no exposed Bulk-Out endpoint")?;
         // Initialize bulk in/out endpoints
-        let bulk_in_endpoint = interface.endpoint::<Bulk, In>(bulk_in_address)?;
-        let bulk_out_endpoint = interface.endpoint::<Bulk, Out>(bulk_in_address)?;
         let writer = interface
             .endpoint::<Bulk, Out>(bulk_out_address)?
             .writer(128)
@@ -126,8 +124,8 @@ impl USBDrive {
         let device = Self {
             bulk_write: writer,
             bulk_read: reader,
-            bulk_in_endpoint,
-            bulk_out_endpoint,
+            bulk_in_address,
+            bulk_out_address,
             interface,
             tag_generator: TagGenerator::new(),
             response_buf: vec![0; 2048],
@@ -140,34 +138,100 @@ impl USBDrive {
     ///
     /// No validation is performed, the input is serialized, sent, and response bytes recieved.
     #[tracing::instrument(skip_all)]
-    pub async fn submit_cbw(
+    pub async fn submit_cbw<'s>(
         &mut self,
         command_block: scsi::command::CommandBlock,
-    ) -> Result<&[u8]> {
-        let (response_bytes, status) = self.submit_cbw_manual(&command_block).await?;
-        //let mut response_bytes = response_bytes.to_vec();
-        // "The host shall perform a Reset Recovery" when phase error status is returned in the
-        // CSW
-        ensure!(
-            status.data_residue == 0,
-            "support for data residue not implemented"
-        );
-        match status.status {
-            CommandStatus::Passed => Ok(response_bytes),
-            CommandStatus::PhaseError => {
-                warn!("phase error detected, beginning reset recovery");
-                self.reset_recovery().await?;
-                let (response_bytes, status) = self.submit_cbw_manual(&command_block).await?;
-                ensure!(
-                    status.status == CommandStatus::Passed,
-                    "command failed after reset recovery performed"
-                );
-                Ok(response_bytes)
+    ) -> Result<Vec<u8>> {
+        // The code here is written in an unusual way and contains an unnecessary heap allocation.
+        // It's a limitation of the borrow checker, and should be resolved with the introduction
+        // of Polonius.
+        // https://rust-lang.github.io/rfcs/2094-nll.html#problem-case-3-conditional-control-flow-across-functions
+        {
+            let (response_bytes, csw) = self.submit_cbw_manual(&command_block).await?;
+            if csw.status == CommandStatus::Passed {
+                return Ok(response_bytes.to_vec());
+            } else if csw.status == CommandStatus::Failed {
+                bail!("command status reported as Failed");
             }
-            CommandStatus::Failed => {
-                bail!("command failed completely");
-            }
+            ensure!(csw.status == CommandStatus::PhaseError);
         }
+
+        warn!("phase error detected, beginning reset recovery");
+        self.reset_recovery().await?;
+        info!("reset succeeded, retrying command");
+        let (response_bytes, status) = self.submit_cbw_manual(&command_block).await?;
+        ensure!(
+            status.status == CommandStatus::Passed,
+            "command failed after reset recovery performed"
+        );
+        Ok(response_bytes.to_vec())
+
+        // --------------------------- ATTEMPT 2 --------------------------------------
+        //match self.submit_cbw_manual(&command_block).await? {
+        //    // Passed
+        //    (response_bytes, csw) if csw.status == CommandStatus::Passed => {
+        //        ensure!(
+        //            csw.data_residue == 0,
+        //            "support for data residue not implemented"
+        //        );
+        //        Ok(response_bytes)
+        //    }
+        //    // Phase Error
+        //    (
+        //        _,
+        //        CommandStatusWrapper {
+        //            status: CommandStatus::PhaseError,
+        //            ..
+        //        },
+        //    ) => {
+        //        warn!("phase error detected, beginning reset recovery");
+        //        //self.reset_recovery().await?;
+        //        let (response_bytes, status) = self.submit_cbw_manual(&command_block).await?;
+        //        ensure!(
+        //            status.status == CommandStatus::Passed,
+        //            "command failed after reset recovery performed"
+        //        );
+        //        Ok(response_bytes)
+        //    }
+        //    // Failed
+        //    (
+        //        _,
+        //        CommandStatusWrapper {
+        //            status: CommandStatus::Failed,
+        //            ..
+        //        },
+        //    ) => {
+        //        bail!("command status wrapper reports Failed");
+        //    }
+        //    (_, _) => unreachable!(),
+        //}
+
+        // ------------------- ATTEMPT 1 -----------------------------------------
+        //
+        //let (response_bytes, status) = self.submit_cbw_manual(&command_block).await?;
+        //
+        //// "The host shall perform a Reset Recovery" when phase error status is returned in the
+        //// CSW
+        //ensure!(
+        //    status.data_residue == 0,
+        //    "support for data residue not implemented"
+        //);
+        //match status.status {
+        //    CommandStatus::Passed => Ok(response_bytes),
+        //    CommandStatus::PhaseError => {
+        //        warn!("phase error detected, beginning reset recovery");
+        //        self.reset_recovery().await?;
+        //        let (response_bytes, status) = self.submit_cbw_manual(&command_block).await?;
+        //        ensure!(
+        //            status.status == CommandStatus::Passed,
+        //            "command failed after reset recovery performed"
+        //        );
+        //        Ok(response_bytes)
+        //    }
+        //    CommandStatus::Failed => {
+        //        bail!("command failed completely");
+        //    }
+        //}
     }
 
     async fn submit_cbw_manual(
@@ -197,10 +261,8 @@ impl USBDrive {
         let (response_bytes, status_bytes) = self.response_buf.split_at_mut(required_capacity);
         // Sometimes there's leftover space in the response buffer that we don't care about
         let status_bytes = &mut status_bytes[..13];
-        debug!(
-            "device sent a {} byte response",
-            self.bulk_read.read(response_bytes).await?
-        );
+        let response_size = self.bulk_read.read(response_bytes).await?;
+        debug!("device sent a {response_size} byte response",);
         //debug!("response buffer filled with {} bytes", response_bytes.len());
         // The status is sent after the response
         self.bulk_read.read_exact(status_bytes).await?;
@@ -216,12 +278,13 @@ impl USBDrive {
         Ok((response_bytes, status))
     }
 
-    // Submit a Bulk-Only Mass Storage Reset
+    /// Submit a Bulk-Only Mass Storage Reset
+    #[tracing::instrument(skip_all)]
     pub async fn mass_storage_reset(&self) -> color_eyre::Result<()> {
         // USB Mass Storage Class - Bulk Only Transport: 3.1
         let request: ControlIn = ControlIn {
             control_type: ControlType::Class,
-            recipient: nusb::transfer::Recipient::Interface,
+            recipient: Recipient::Interface,
             request: 255,
             value: 0,
             index: 0,
@@ -238,13 +301,34 @@ impl USBDrive {
     /// Used to reset the device after a phase error.
     ///
     /// USB Mass Storage class - Bulk Only Transport 5.3.4
+    #[tracing::instrument(skip_all)]
     pub async fn reset_recovery(&mut self) -> color_eyre::Result<()> {
         // (a) a Bulk-Only Mass Storage Reset
         self.mass_storage_reset().await?;
         // (b) a *Clear Feature HALT* to the Bulk-In endpoint
-        self.bulk_in_endpoint.clear_halt().await?;
+        // See the USB 2.0 spec <https://eater.net/downloads/usb_20.pdf>, section 9.4.1.
+        let mut clear_feature_halt: ControlOut = ControlOut {
+            control_type: ControlType::Standard,
+            recipient: Recipient::Endpoint,
+            // As defined in table 9-4, USB spec rev 2.0
+            request: 1,
+            // Table 9-6 defines 0 the value associated with an ENDPOINT_HALT
+            value: 0,
+            index: u16::from(self.bulk_in_address),
+            data: &[],
+        };
+        debug!("submitting `CLEAR_HALT` to the bulk-in interface");
+        self.interface
+            .control_out(clear_feature_halt, Duration::from_millis(500))
+            .await?;
         // (c) a *Clear Feature HALT* to the Bulk-Out endpoint
-        self.bulk_out_endpoint.clear_halt().await?;
+        // Here we re-use the same struct w/ different address
+        debug!("submitting `CLEAR_HALT` to the bulk-out interface");
+        clear_feature_halt.index = u16::from(self.bulk_out_address);
+        self.interface
+            .control_out(clear_feature_halt, Duration::from_millis(500))
+            .await?;
+        debug!("reset completed without errors");
         Ok(())
     }
 }

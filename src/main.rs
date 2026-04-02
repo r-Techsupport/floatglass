@@ -24,7 +24,9 @@ async fn main() -> Result<()> {
     let drive = usb::USBDrive::new(device).await?;
     let mut scsi_device = scsi::SCSIDevice::new(drive).await?;
 
-    let first_block = scsi_device.issue_command(command::read(1, 1)).await?.raw();
-    dbg!(first_block);
+    let first_block = scsi_device
+        .issue_command(command::read(1, 1, scsi_device.block_size))
+        .await?;
+    dbg!(first_block.raw());
     Ok(())
 }

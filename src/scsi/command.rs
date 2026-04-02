@@ -45,7 +45,7 @@ impl CommandBlock {
 /// "The READ (10) command request that the device server transfer data to the application client."
 ///
 /// SBC-2 5.1.7
-pub fn read(logical_block_address: u32, transfer_len: u16) -> CommandBlock {
+pub fn read(logical_block_address: u32, transfer_len: u16, block_size: u32) -> CommandBlock {
     CommandBlock {
         command: Box::new(X10CommandDescriptor {
             operation_code: OpCode::Read,
@@ -57,7 +57,7 @@ pub fn read(logical_block_address: u32, transfer_len: u16) -> CommandBlock {
             control: 0,
         }),
         direction: CBWDirection::NonDirectional,
-        data_transfer_len: 0,
+        data_transfer_len: block_size * u32::from(transfer_len),
         response_parser: response::no_response,
     }
 }

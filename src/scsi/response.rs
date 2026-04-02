@@ -4,8 +4,8 @@ use color_eyre::eyre::ensure;
 
 pub type ResponseParser = fn(&[u8]) -> color_eyre::Result<Response>;
 
-pub enum Response<'a> {
-    Inquiry(&'a Inquiry),
+pub enum Response {
+    Inquiry(Inquiry),
     /// A tuple of (DRIVE SIZE, BLOCK_SIZE)
     /// where drive size is in blocks, and block size
     /// is in bytes
@@ -15,23 +15,23 @@ pub enum Response<'a> {
     None,
 }
 
-pub fn no_response(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
+pub fn no_response(buf: &[u8]) -> color_eyre::Result<Response> {
     ensure!(buf.is_empty());
     Ok(Response::None)
 }
 
-pub fn inquiry(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
+pub fn inquiry(buf: &[u8]) -> color_eyre::Result<Response> {
     ensure!(
         buf.len() == std::mem::size_of::<Inquiry>(),
         "provided slice length does not match struct size"
     );
     // SAFETY: it's been validated that the slice size matches the struct size
-    let s: &'_ Inquiry = unsafe { &*(buf.as_ptr() as *const Inquiry) };
-    Ok(Response::Inquiry(s))
+    let s: &Inquiry = unsafe { &*(buf.as_ptr() as *const Inquiry) };
+    Ok(Response::Inquiry(s.clone()))
 }
 
 /// Described in SBC-2 Table 29
-pub fn read_capacity(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
+pub fn read_capacity(buf: &[u8]) -> color_eyre::Result<Response> {
     ensure!(buf.len() == 8);
     let mut capacity_bytes = [0u8; 4];
     capacity_bytes.copy_from_slice(&buf[0..4]);
@@ -47,13 +47,14 @@ pub fn read_capacity(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
 }
 
 /// "if bit 6 of byte 2 is set, the drive is read only"
-pub fn mode_sense(buf: &[u8]) -> color_eyre::Result<Response<'_>> {
+pub fn mode_sense(buf: &[u8]) -> color_eyre::Result<Response> {
     ensure!(buf.len() == 192);
     let read_only = buf[2] & 0b_0100_0000 != 0;
     // I'm not confident that this is implemented correctly
     Ok(Response::ModeSense(read_only))
 }
 
+#[derive(Clone)]
 #[repr(C, packed)]
 pub struct Inquiry {
     /// Contains both the PERIPHERAL QUALIFIER (bits 7:5) and PERIPHERAL DEVICE TYPE (bits 4:0)
