@@ -1,11 +1,11 @@
 pub mod scsi;
 pub mod usb;
 
+use crate::scsi::command;
 use color_eyre::{Result, eyre::ContextCompat};
+use std::fmt::Write;
 use tracing::{info, level_filters::LevelFilter};
 use usb::enumerate_usb_storage_devices;
-
-use crate::scsi::command;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -27,6 +27,19 @@ async fn main() -> Result<()> {
     let first_block = scsi_device
         .issue_command(command::read(1, 1, scsi_device.block_size))
         .await?;
-    dbg!(first_block.raw());
+    let mut hex_repr = String::with_capacity(512);
+    let mut ascii_repr = String::with_capacity(512);
+    for byte in first_block.raw().iter() {
+        write!(hex_repr, "{byte:X} ")?;
+        if byte.is_ascii() {
+            ascii_repr.push(*byte as char);
+        } else {
+            ascii_repr.push('.');
+        }
+    }
+
+    println!(
+        "HEX REPRESENTATION:\n----------\n{hex_repr}\n-----------\nACII REPR:\n-------------\n{ascii_repr}\n-------------"
+    );
     Ok(())
 }

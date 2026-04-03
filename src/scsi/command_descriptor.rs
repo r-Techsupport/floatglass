@@ -74,6 +74,7 @@ pub struct X10CommandDescriptor {
     pub service_action: u8,
     /// The use of this field varies from command to command.
     pub logical_block_address: [u8; 4],
+    pub _reserved: u8,
     /// Depending on the opcode, this field is one of `TRANSFER LENGTH` (amount of
     /// data to be transferred, usually in blocks),
     /// `PARAMETER LIST LENGTH` (number of bytes sent from the Data-Out buffer),

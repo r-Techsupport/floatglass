@@ -10,7 +10,7 @@ use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, Direction, In, Out, Recipient};
 use nusb::{Device, DeviceInfo, Endpoint, Interface, list_devices};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::scsi;
 use crate::usb::cbw::{CommandBlockWrapper, CommandStatus, CommandStatusWrapper, TagGenerator};
@@ -147,12 +147,21 @@ impl USBDrive {
         // of Polonius.
         // https://rust-lang.github.io/rfcs/2094-nll.html#problem-case-3-conditional-control-flow-across-functions
         {
-            let (response_bytes, csw) = self.submit_cbw_manual(&command_block).await?;
+            // Because of async drop shenanigans, a whole bunch of log messages created by
+            // unwinding appear in the logs before the error message is reported.
+            // This makes it difficult to know when the error actually occured
+            let result = self.submit_cbw_manual(&command_block).await;
+            if result.is_err() {
+                error!("submitting CBW failed");
+                return Err(result.unwrap_err());
+            }
+            let (response_bytes, csw) = result.unwrap();
             if csw.status == CommandStatus::Passed {
                 return Ok(response_bytes.to_vec());
             } else if csw.status == CommandStatus::Failed {
                 bail!("command status reported as Failed");
             }
+            // Every other state should have returned before this point
             ensure!(csw.status == CommandStatus::PhaseError);
         }
 
@@ -165,73 +174,6 @@ impl USBDrive {
             "command failed after reset recovery performed"
         );
         Ok(response_bytes.to_vec())
-
-        // --------------------------- ATTEMPT 2 --------------------------------------
-        //match self.submit_cbw_manual(&command_block).await? {
-        //    // Passed
-        //    (response_bytes, csw) if csw.status == CommandStatus::Passed => {
-        //        ensure!(
-        //            csw.data_residue == 0,
-        //            "support for data residue not implemented"
-        //        );
-        //        Ok(response_bytes)
-        //    }
-        //    // Phase Error
-        //    (
-        //        _,
-        //        CommandStatusWrapper {
-        //            status: CommandStatus::PhaseError,
-        //            ..
-        //        },
-        //    ) => {
-        //        warn!("phase error detected, beginning reset recovery");
-        //        //self.reset_recovery().await?;
-        //        let (response_bytes, status) = self.submit_cbw_manual(&command_block).await?;
-        //        ensure!(
-        //            status.status == CommandStatus::Passed,
-        //            "command failed after reset recovery performed"
-        //        );
-        //        Ok(response_bytes)
-        //    }
-        //    // Failed
-        //    (
-        //        _,
-        //        CommandStatusWrapper {
-        //            status: CommandStatus::Failed,
-        //            ..
-        //        },
-        //    ) => {
-        //        bail!("command status wrapper reports Failed");
-        //    }
-        //    (_, _) => unreachable!(),
-        //}
-
-        // ------------------- ATTEMPT 1 -----------------------------------------
-        //
-        //let (response_bytes, status) = self.submit_cbw_manual(&command_block).await?;
-        //
-        //// "The host shall perform a Reset Recovery" when phase error status is returned in the
-        //// CSW
-        //ensure!(
-        //    status.data_residue == 0,
-        //    "support for data residue not implemented"
-        //);
-        //match status.status {
-        //    CommandStatus::Passed => Ok(response_bytes),
-        //    CommandStatus::PhaseError => {
-        //        warn!("phase error detected, beginning reset recovery");
-        //        self.reset_recovery().await?;
-        //        let (response_bytes, status) = self.submit_cbw_manual(&command_block).await?;
-        //        ensure!(
-        //            status.status == CommandStatus::Passed,
-        //            "command failed after reset recovery performed"
-        //        );
-        //        Ok(response_bytes)
-        //    }
-        //    CommandStatus::Failed => {
-        //        bail!("command failed completely");
-        //    }
-        //}
     }
 
     async fn submit_cbw_manual(
@@ -261,8 +203,14 @@ impl USBDrive {
         let (response_bytes, status_bytes) = self.response_buf.split_at_mut(required_capacity);
         // Sometimes there's leftover space in the response buffer that we don't care about
         let status_bytes = &mut status_bytes[..13];
-        let response_size = self.bulk_read.read(response_bytes).await?;
-        debug!("device sent a {response_size} byte response",);
+        let mut response_size = 0;
+        //loop {
+        response_size += self.bulk_read.read(response_bytes).await?;
+        debug!("read {response_size} bytes into the response buffer so far",);
+        //    if response_size == (command_block.data_transfer_len as usize) {
+        //        break;
+        //    }
+        //}
         //debug!("response buffer filled with {} bytes", response_bytes.len());
         // The status is sent after the response
         self.bulk_read.read_exact(status_bytes).await?;
