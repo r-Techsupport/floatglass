@@ -22,7 +22,7 @@ impl CommandBlock {
     /// Returns the length of the underlying command block.
     ///
     /// Will always be less than 16 bytes.
-    pub fn len(&self) -> usize {
+    pub fn size_of(&self) -> usize {
         std::mem::size_of_val(&*self.command)
     }
 
@@ -30,10 +30,10 @@ impl CommandBlock {
     /// Storage Class - Bulk Only Transport section 5.1 (CBWCB).
     pub fn get(&self) -> [u8; 16] {
         let mut output_buf: [u8; 16] = [0; 16];
-        let (subslice, _) = output_buf.split_at_mut(self.len());
+        let (subslice, _) = output_buf.split_at_mut(self.size_of());
         let slice = unsafe {
             let ptr = &*self.command as *const dyn CommandDescriptor as *const u8;
-            std::slice::from_raw_parts(ptr, self.len())
+            std::slice::from_raw_parts(ptr, self.size_of())
         };
         subslice.copy_from_slice(slice);
         output_buf
@@ -45,9 +45,7 @@ impl CommandBlock {
 /// "The READ (10) command request that the device server transfer data to the application client."
 ///
 /// SBC-2 5.1.7
-#[tracing::instrument]
 pub fn read(logical_block_address: u32, transfer_len: u16, block_size: u32) -> CommandBlock {
-    tracing::info!("submitting READ (10)");
     CommandBlock {
         command: Box::new(X10CommandDescriptor {
             operation_code: OpCode::Read,
@@ -59,11 +57,41 @@ pub fn read(logical_block_address: u32, transfer_len: u16, block_size: u32) -> C
             misc_len: transfer_len.to_be_bytes(),
             control: 0,
         }),
-        direction: CBWDirection::NonDirectional,
+        direction: CBWDirection::DataIn,
         data_transfer_len: u32::from(transfer_len) * block_size,
         response_parser: response::no_response,
     }
 }
+
+/// Write `transfer_len` contiguous blocks to the device, starting at `logical_block_address`.
+///
+/// After this command is submitted, the data is written to the USB bulk-out endpoint
+///
+///"The WRITE (10) command requests that the device server write the data transferred by the
+/// application client to the medium."
+///
+/// SBC-2 5.1.29
+pub fn write(transfer_len: u16, logical_block_address: u32, block_size: u32) -> CommandBlock {
+    CommandBlock {
+        command: Box::new(X10CommandDescriptor {
+            operation_code: OpCode::Write,
+            // Support for DPO, FUA, RBP, and RELADR is currently unimplemented because it has been
+            // deemed unnecessary
+            service_action: 0,
+            logical_block_address: logical_block_address.to_be_bytes(),
+            _reserved: 0,
+            // "The TRANSFER_LENGTH field specifies the number of contiguous logical
+            // blocks of data that shall be transferred."
+            misc_len: transfer_len.to_be_bytes(),
+            control: 0,
+        }),
+        direction: CBWDirection::DataOut,
+        data_transfer_len: u32::from(transfer_len * (block_size as u16)),
+        response_parser: response::no_response,
+    }
+}
+
+// TODO: implement SBC-2 5.1.25 VERIFY (10), or WRITE AND VERIFY
 
 /// "The TEST UNIT READY command provides a means to check if the logical unit is ready.
 ///

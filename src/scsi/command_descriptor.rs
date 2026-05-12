@@ -21,6 +21,8 @@ pub enum OpCode {
     ReadCapacity = 0x25,
     /// SBC-2 5.1.7
     Read = 0x28,
+    /// SBC-2 5.1.29
+    Write = 0x2A,
 }
 
 /// As described in SPC-2 4.3.2 table 1, a typical CDB for 6 byte commands.
@@ -101,6 +103,10 @@ impl CommandDescriptor for X10CommandDescriptor {}
 /// "SCSI Primary Commands - 2 (SPC-2)" 4.3.2 The fixed length CDB formats
 /// Table 4 -- Typical CDB for 16-byte commands
 #[repr(C, packed)]
+#[expect(
+    unused,
+    reason = "we currently do not use any x16 commands but will likely do so in the future"
+)]
 pub struct X16CommandDescriptor {
     ///"The `OPERATION CODE` field contains the code value identifying the operation
     /// being requested by the CDB. SAM-2 defines the general structure of the operation

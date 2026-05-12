@@ -65,7 +65,8 @@ pub struct Inquiry {
     ///
     /// - 0b0000 – The specified device type is currently connected. This
     ///   does not mean the device is ready for access.
-    /// (see SPC-2 table 47 for exact definitions).
+    ///   (see SPC-2 table 47 for exact definitions).
+    ///
     /// In this implementation it is assumed that any other case is a failure.
     ///
     /// I believe the PERIPHERAL QUALIFIER field should

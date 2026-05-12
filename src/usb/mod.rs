@@ -8,12 +8,14 @@ use color_eyre::eyre::{ContextCompat, bail, ensure};
 use nusb::descriptors::TransferType;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, Direction, In, Out, Recipient};
-use nusb::{Device, DeviceInfo, Endpoint, Interface, list_devices};
+use nusb::{Device, DeviceInfo, Interface, list_devices};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
 
 use crate::scsi;
-use crate::usb::cbw::{CommandBlockWrapper, CommandStatus, CommandStatusWrapper, TagGenerator};
+use crate::usb::cbw::{
+    CBWDirection, CommandBlockWrapper, CommandStatus, CommandStatusWrapper, TagGenerator,
+};
 /// https://www.usb.org/defined-class-codes
 const MASS_STORAGE_USB_CLASS: u8 = 0x08;
 /// SCSI transparent set subclass
@@ -138,7 +140,7 @@ impl USBDrive {
     ///
     /// No validation is performed, the input is serialized, sent, and response bytes recieved.
     #[tracing::instrument(skip_all)]
-    pub async fn submit_cbw<'s>(
+    pub async fn submit_cbw(
         &mut self,
         command_block: scsi::command::CommandBlock,
     ) -> Result<Vec<u8>> {
@@ -151,9 +153,9 @@ impl USBDrive {
             // unwinding appear in the logs before the error message is reported.
             // This makes it difficult to know when the error actually occured
             let result = self.submit_cbw_manual(&command_block).await;
-            if result.is_err() {
+            if let Err(e) = result {
                 error!("submitting CBW failed");
-                return Err(result.unwrap_err());
+                bail!(e);
             }
             let (response_bytes, csw) = result.unwrap();
             if csw.status == CommandStatus::Passed {
@@ -180,31 +182,43 @@ impl USBDrive {
         &'_ mut self,
         command_block: &scsi::command::CommandBlock,
     ) -> Result<(&'_ [u8], &'_ CommandStatusWrapper)> {
+        if command_block.direction == CBWDirection::NonDirectional {
+            ensure!(
+                command_block.data_transfer_len == 0,
+                "CBW declared as non-directional has data to transfer"
+            )
+        }
         let command = CommandBlockWrapper {
             signature: cbw::CBW_SIGNATURE.to_le_bytes(),
             command: command_block.get(),
             data_transfer_length: command_block.data_transfer_len.to_le_bytes(),
             direction: command_block.direction,
             lun: 0,
-            command_block_length: command_block.len() as u8,
+            command_block_length: command_block.size_of() as u8,
             tag: self.tag_generator.tag().to_le_bytes(),
         };
+        // As described by USB Mass Storage Class - Bulk Only Transport,
+        // "The host shall send the CBW before the associated data-out, and
+        // the device shall send data-in after the associated cbw and before the associated
+        // csw
         // Submit the command
         {
             self.bulk_write.write_all(command.as_slice()).await?;
             self.bulk_write.flush_end_async().await?;
             debug!("command submitted, pending response");
         }
+        let mut required_capacity = 0;
         // Ensure the response buffer can fit the response size
-        let required_capacity = u32::from_le_bytes(command.data_transfer_length) as usize;
-        if self.response_buf.len() < required_capacity + 13 {
-            self.response_buf.resize(required_capacity + 13, 0);
+        if command.direction == CBWDirection::DataIn {
+            required_capacity = u32::from_le_bytes(command.data_transfer_length) as usize;
+            if self.response_buf.len() < required_capacity + 13 {
+                self.response_buf.resize(required_capacity + 13, 0);
+            }
         }
         let (response_bytes, status_bytes) = self.response_buf.split_at_mut(required_capacity);
         // Sometimes there's leftover space in the response buffer that we don't care about
         let status_bytes = &mut status_bytes[..13];
         let mut response_size = 0;
-        //loop {
         response_size += self.bulk_read.read(response_bytes).await?;
         debug!("read {response_size} bytes into the response buffer so far",);
         //    if response_size == (command_block.data_transfer_len as usize) {

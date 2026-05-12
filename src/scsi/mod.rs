@@ -119,6 +119,20 @@ impl SCSIDevice {
             parser,
         })
     }
+
+    /// A higher level wrapper over the SCSI `READ` command.
+    ///
+    /// Reads `len` contiguous blocks, starting from `logical_block_address`.
+    pub async fn read(&mut self, logical_block_address: u32, len: u16) -> Result<Vec<u8>> {
+        let response = self
+            .issue_command(command::read(logical_block_address, len, self.block_size))
+            .await
+            .wrap_err("attempting to issue READ")?
+            .raw()
+            .to_vec();
+
+        Ok(response)
+    }
 }
 
 pub struct ResponseBytes {

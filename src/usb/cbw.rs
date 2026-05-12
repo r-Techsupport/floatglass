@@ -16,12 +16,16 @@ const CSW_SIGNATURE: u32 = 0x53425355;
 /// A command block wrapper is *always* 31 bytes in size*
 const CBW_SIZE: usize = 31;
 
-#[derive(Copy, Clone)]
+/// Described under section 5.1 of the USB mass storage spec under the subheading
+/// `bmCBWFlags`.
+///
+///
+#[derive(PartialEq, Copy, Clone)]
 pub enum CBWDirection {
     /// Data-Out: from host to the device
-    DataOut = 0b100_0000,
+    DataOut = 0b0000_0000,
     /// Data-In: from the device to the host
-    DataIn = 0,
+    DataIn = 0b1000_0000,
     /// For when the CBW has a data transfer length of zero.
     ///
     /// According to the spec, this field is ignored entirely if the data transfer
@@ -187,6 +191,12 @@ impl TagGenerator {
         let output = self.0;
         self.0 = self.0.wrapping_add(1);
         output
+    }
+}
+
+impl Default for TagGenerator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
